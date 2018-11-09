@@ -579,6 +579,36 @@ void Driver::CreateOffloadingDeviceToolChains(Compilation &C,
                      return types::isHIP(I.first);
                    }) ||
       C.getInputArgs().hasArg(options::OPT_hip_link);
+
+  // TODO schi add
+  // Check if this is HIP automatic mode.  That is, when user tries to
+  // "cuda" compile his source in a .cu file (or -x cuda specified) but
+  // user set --cuda-gpu-arch=gfx (not sm__) and he did not set -x hip or
+  // -hip-link, then we automatically assume to use HIP and provide
+  // automatic hip headers.
+  bool HIPAutomaticMode = false;
+  if (!IsHIP) {
+    for (Arg *A : C.getInputArgs())
+      if (A->getOption().matches(options::OPT_cuda_gpu_arch_EQ) &&
+          StringRef(A->getValue()).startswith("gfx")) {
+        IsHIP = true;
+        IsCuda = false;
+        HIPAutomaticMode = true;
+      }
+  }
+
+  // If no --cuda-gpu-arch= (aka --offload-arch=gfxXXX) was specified
+  // but hip_auto_headers was specified, then turn on HIP.
+  // FIXME: We may want to set a default gfx id here
+  StringRef hdrs =
+      C.getInputArgs().getLastArgValue(options::OPT_hip_auto_headers_EQ);
+  if (!IsHIP && !hdrs.empty()) {
+    HIPAutomaticMode = true;
+    IsHIP = true;
+    IsCuda = false;
+  }
+
+
   if (IsCuda && IsHIP) {
     Diag(clang::diag::err_drv_mix_cuda_hip);
     return;
@@ -611,7 +641,8 @@ void Driver::CreateOffloadingDeviceToolChains(Compilation &C,
     auto &HIPTC = ToolChains[HIPTriple.str() + "/" + HostTriple.str()];
     if (!HIPTC) {
       HIPTC = llvm::make_unique<toolchains::HIPToolChain>(
-          *this, HIPTriple, *HostTC, C.getInputArgs());
+          *this, HIPTriple, *HostTC, C.getInputArgs(), OFK, HIPAutomaticMode);
+          // TODO schi *this, HIPTriple, *HostTC, C.getInputArgs());
     }
     C.addOffloadDeviceToolChain(HIPTC.get(), OFK);
   }
@@ -671,6 +702,22 @@ void Driver::CreateOffloadingDeviceToolChains(Compilation &C,
                 CudaTC = llvm::make_unique<toolchains::CudaToolChain>(
                     *this, TT, *HostTC, C.getInputArgs(), Action::OFK_OpenMP);
               TC = CudaTC.get();
+              // TODO schi add
+            } else if (TT.getArch() == llvm::Triple::amdgcn) {
+              const ToolChain *HostTC =
+                  C.getSingleOffloadToolChain<Action::OFK_Host>();
+              const llvm::Triple &HostTriple = HostTC->getTriple();
+              StringRef DeviceTripleStr;
+              DeviceTripleStr = "amdgcn-amd-amdhsa";
+              llvm::Triple HIPTriple(DeviceTripleStr);
+              auto &HIPTC =
+                  ToolChains[HIPTriple.str() + "/" + HostTriple.str()];
+              if (!HIPTC) {
+                HIPTC = llvm::make_unique<toolchains::HIPToolChain>(
+                    *this, HIPTriple, *HostTC, C.getInputArgs(),
+                    Action::OFK_OpenMP, false);
+              }
+              TC = HIPTC.get();
             } else
               TC = &getToolChain(C.getInputArgs(), TT);
             C.addOffloadDeviceToolChain(TC, Action::OFK_OpenMP);
@@ -2653,6 +2700,13 @@ class OffloadingActionBuilder final {
     /// The OpenMP actions for the current input.
     ActionList OpenMPDeviceActions;
 
+    bool CompileHostOnly = false;
+    bool CompileDeviceOnly = false;
+
+    /// List of GPU architectures to use in this compilation.
+    SmallVector<CudaArch, 4> GpuArchList;
+
+
     /// The linker inputs obtained for each toolchain.
     SmallVector<ActionList, 8> DeviceLinkerInputs;
 
@@ -2672,6 +2726,37 @@ class OffloadingActionBuilder final {
       assert(OpenMPDeviceActions.size() == ToolChains.size() &&
              "Number of OpenMP actions and toolchains do not match.");
 
+      // FIXME:  Is there an easier way to determine amdgcn at this point?
+      bool Is_amdgcn = false;
+      for (Arg *A : Args) {
+        if (A->getOption().matches(options::OPT_Xopenmp_target_EQ)) {
+          for (auto *V : A->getValues()) {
+            StringRef VStr = StringRef(V);
+            if (VStr.startswith("-march=")) {
+              if (StringRef(VStr.str().substr(7)).startswith("gfx"))
+                Is_amdgcn = true;
+            }
+          }
+        }
+      }
+#if 0
+      printf("  X  OPENMP getDeviceDependences C:%d B:%d A:%d L:%d  CURRENT:%d isamd:%d\n",
+         phases::Compile,
+         phases::Backend,
+         phases::Assemble,
+         phases::Link, 
+         CurPhase,
+         Is_amdgcn
+      );
+#endif
+
+      // amdgcn does not support linking of object files, therefore we skip
+      // backend and assemble phases to output LLVM IR.
+      if (Is_amdgcn &&
+          (CurPhase == phases::Backend || CurPhase == phases::Assemble))
+        return ABRT_Success;
+
+
       // The host only depends on device action in the linking phase, when all
       // the device images have to be embedded in the host image.
       if (CurPhase == phases::Link) {
@@ -2690,10 +2775,14 @@ class OffloadingActionBuilder final {
       }
 
       // By default, we produce an action for each device arch.
-      for (Action *&A : OpenMPDeviceActions)
+      bool LastActionIsCompile = false;
+      for (Action *&A : OpenMPDeviceActions) {
         A = C.getDriver().ConstructPhaseAction(C, Args, CurPhase, A);
-
-      return ABRT_Success;
+       LastActionIsCompile =
+            (A->getKind() == Action::ActionClass::CompileJobClass);
+      }
+      return (CompileDeviceOnly && LastActionIsCompile) ? ABRT_Ignore_Host
+                                                        : ABRT_Success;
     }
 
     ActionBuilderReturnCode addDeviceDepences(Action *HostAction) override {
@@ -2796,6 +2885,74 @@ class OffloadingActionBuilder final {
         ToolChains.push_back(TI->second);
 
       DeviceLinkerInputs.resize(ToolChains.size());
+      // TODO schi add
+      // Collect all cuda_gpu_arch parameters, removing duplicates.
+      std::set<CudaArch> GpuArchs;
+      bool Error = false;
+
+      Arg *PartialCompilationArg = Args.getLastArg(
+          options::OPT_cuda_host_only, options::OPT_cuda_device_only,
+          options::OPT_cuda_compile_host_device);
+      CompileHostOnly =
+          PartialCompilationArg && PartialCompilationArg->getOption().matches(
+                                       options::OPT_cuda_host_only);
+      CompileDeviceOnly =
+          PartialCompilationArg && PartialCompilationArg->getOption().matches(
+                                       options::OPT_cuda_device_only);
+
+      // Add each -march from -Xopenmp before processing offload-arch flags
+      for (Arg *A : Args) {
+        if (A->getOption().matches(options::OPT_Xopenmp_target_EQ)) {
+          for (auto *V : A->getValues()) {
+            StringRef VStr = StringRef(V);
+            if (VStr.startswith("-march=")) {
+              CudaArch Arch = StringToCudaArch(StringRef(VStr.str().substr(7)));
+              if (Arch == CudaArch::UNKNOWN) {
+                C.getDriver().Diag(clang::diag::err_drv_cuda_bad_gpu_arch)
+                    << VStr;
+                Error = true;
+              }
+              GpuArchs.insert(Arch);
+            }
+          }
+          A->claim();
+        }
+      }
+
+      for (Arg *A : Args) {
+        if (!(A->getOption().matches(options::OPT_cuda_gpu_arch_EQ) ||
+              A->getOption().matches(options::OPT_no_cuda_gpu_arch_EQ)))
+          continue;
+        A->claim();
+
+        const StringRef ArchStr = A->getValue();
+        if (A->getOption().matches(options::OPT_no_cuda_gpu_arch_EQ) &&
+            ArchStr == "all") {
+          GpuArchs.clear();
+          continue;
+        }
+        CudaArch Arch = StringToCudaArch(ArchStr);
+        if (Arch == CudaArch::UNKNOWN) {
+          C.getDriver().Diag(clang::diag::err_drv_cuda_bad_gpu_arch) << ArchStr;
+          Error = true;
+        } else if (A->getOption().matches(options::OPT_cuda_gpu_arch_EQ))
+          GpuArchs.insert(Arch);
+        else if (A->getOption().matches(options::OPT_no_cuda_gpu_arch_EQ))
+          GpuArchs.erase(Arch);
+        else
+          llvm_unreachable("Unexpected option.");
+      }
+
+      // Collect list of GPUs remaining in the set.
+      for (CudaArch Arch : GpuArchs)
+        GpuArchList.push_back(Arch);
+
+      // Default to sm_20 which is the lowest common denominator for
+      // supported GPUs.  sm_20 code should work correctly, if
+      // suboptimally, on all newer GPUs.
+      if (GpuArchList.empty())
+        GpuArchList.push_back(CudaArch::SM_20);
+
       return false;
     }
 
@@ -2988,7 +3145,7 @@ public:
 
     // If we can use the bundler, replace the host action by the bundling one in
     // the resulting list. Otherwise, just append the device actions.
-    if (CanUseBundler && !OffloadAL.empty()) {
+    if (CanUseBundler && !OffloadAL.empty() && HostAction) {
       // Add the host action to the list in order to create the bundling action.
       OffloadAL.push_back(HostAction);
 

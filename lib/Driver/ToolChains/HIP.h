@@ -75,7 +75,9 @@ namespace toolchains {
 class LLVM_LIBRARY_VISIBILITY HIPToolChain : public ToolChain {
 public:
   HIPToolChain(const Driver &D, const llvm::Triple &Triple,
-                const ToolChain &HostTC, const llvm::opt::ArgList &Args);
+                const ToolChain &HostTC, const llvm::opt::ArgList &Args,
+               const Action::OffloadKind OK, const bool isHIPAutomaticMode);
+
 
   const llvm::Triple *getAuxTriple() const override {
     return &HostTC.getTriple();
@@ -117,8 +119,14 @@ public:
 
   const ToolChain &HostTC;
 
+  bool HIPAutomaticMode = false;
+  bool isAutomaticMode() const { return HIPAutomaticMode; }
+
+
 protected:
   Tool *buildLinker() const override;
+private:
+  const Action::OffloadKind OK;
 };
 
 } // end namespace toolchains

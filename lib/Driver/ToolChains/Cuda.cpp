@@ -813,6 +813,12 @@ CudaToolChain::GetCXXStdlibType(const ArgList &Args) const {
 
 void CudaToolChain::AddClangSystemIncludeArgs(const ArgList &DriverArgs,
                                               ArgStringList &CC1Args) const {
+    // TODO schi add
+  // For HC2, pick up includes from compiler install include path first
+  const Driver &D = HostTC.getDriver();
+  CC1Args.push_back("-internal-isystem");
+  CC1Args.push_back(DriverArgs.MakeArgString(D.Dir + "/../include"));
+
   HostTC.AddClangSystemIncludeArgs(DriverArgs, CC1Args);
 }
 

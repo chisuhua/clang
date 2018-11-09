@@ -39,6 +39,10 @@ set(files
   __clang_cuda_libdevice_declares.h
   __clang_cuda_math_forward_declares.h
   __clang_cuda_runtime_wrapper.h
+  __clang_hip_automatic_cuda_open.h
+  __clang_hip_automatic_hip.h
+  __clang_hip_automatic_cuda.h
+  __clang_openmp_runtime_wrapper.h
   cetintrin.h
   cldemoteintrin.h
   clzerointrin.h
@@ -157,6 +161,50 @@ list(APPEND out_files ${output_dir}/arm_fp16.h)
 
 add_custom_target(clang-headers ALL DEPENDS ${out_files})
 set_target_properties(clang-headers PROPERTIES FOLDER "Misc")
+
+# TODO schi add below and hip_files
+set(cuda_open_files
+  cuda_open/__clang_cuda_open_builtins.h
+  cuda_open/__clang_cuda_open_builtin_vars.h
+  cuda_open/__clang_cuda_open_cmath.h
+  cuda_open/__clang_cuda_open_complex_builtins.h
+  cuda_open/__clang_cuda_open_device_functions.h
+  cuda_open/__clang_cuda_open_intrinsics.h
+  cuda_open/__clang_cuda_open_math_forward_declares.h
+  cuda_open/__clang_cuda_open_nv_declares.h
+  cuda_open/cuda_fp16.h
+  cuda_open/cuda_open.h
+  cuda_open/cuda_open_runtime.h
+  cuda_open/device_atomic_functions.hpp
+  cuda_open/device_double_functions.h
+  cuda_open/device_functions.h
+  cuda_open/device_functions.hpp
+  cuda_open/device_runtime.h
+  cuda_open/driver_types.h
+  cuda_open/host_config.h
+  cuda_open/host_defines.h
+  cuda_open/math_functions_dbl.hpp
+  cuda_open/math_functions.hpp
+  cuda_open/texture_indirect_functions.h
+  cuda_open/vector_types.h
+)
+
+set(hip_files
+  hip/hip_host_runtime_api.h
+  hip/hip_common.h
+)
+
+install(
+  FILES ${hip_files}
+  COMPONENT clang-headers
+  PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ
+  DESTINATION lib${LLVM_LIBDIR_SUFFIX}/clang/${CLANG_VERSION}/include/hip)
+
+install(
+  FILES ${cuda_open_files}
+  COMPONENT clang-headers
+  PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ
+  DESTINATION lib${LLVM_LIBDIR_SUFFIX}/clang/${CLANG_VERSION}/include/cuda_open)
 
 install(
   FILES ${files} ${CMAKE_CURRENT_BINARY_DIR}/arm_neon.h

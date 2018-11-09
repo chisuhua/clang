@@ -60,6 +60,10 @@ const char *AMDGCN::Linker::constructLLVMLinkCommand(
     LibraryPaths.push_back(Args.MakeArgString(Path));
 
   addDirectoryList(Args, LibraryPaths, "-L", "HIP_DEVICE_LIB_PATH");
+  // If device debugging turned on, add specially built bc files
+  // Add compiler path libdevice last as lowest priority search
+  LibraryPaths.push_back(Args.MakeArgString(
+      C.getDriver().Dir + "/../lib/libdevice/" + SubArchName));
 
   llvm::SmallVector<std::string, 10> BCLibs;
 
@@ -81,7 +85,9 @@ const char *AMDGCN::Linker::constructLLVMLinkCommand(
     else
       FlushDenormalControlBC = "oclc_daz_opt_off.amdgcn.bc";
 
-    BCLibs.append({"hip.amdgcn.bc", "opencl.amdgcn.bc",
+    // TODO schi BCLibs.append({"hip.amdgcn.bc", "opencl.amdgcn.bc",
+    BCLibs.append({"opencl.amdgcn.bc",
+                   "cuda2gcn.amdgcn.bc",
                    "ocml.amdgcn.bc", "ockl.amdgcn.bc",
                    "oclc_finite_only_off.amdgcn.bc",
                    FlushDenormalControlBC,
@@ -153,8 +159,9 @@ const char *AMDGCN::Linker::constructLlcCommand(
     const llvm::opt::ArgList &Args, llvm::StringRef SubArchName,
     llvm::StringRef OutputFilePrefix, const char *InputFileName) const {
   // Construct llc command.
+                        // "-filetype=obj", "-mattr=-code-object-v3",
   ArgStringList LlcArgs{InputFileName, "-mtriple=amdgcn-amd-amdhsa",
-                        "-filetype=obj", "-mattr=-code-object-v3",
+                        "-filetype=obj",
                         Args.MakeArgString("-mcpu=" + SubArchName), "-o"};
   std::string LlcOutputFileName =
       C.getDriver().GetTemporaryPath(OutputFilePrefix, "o");
@@ -250,11 +257,14 @@ void AMDGCN::Linker::ConstructJob(Compilation &C, const JobAction &JA,
 }
 
 HIPToolChain::HIPToolChain(const Driver &D, const llvm::Triple &Triple,
-                             const ToolChain &HostTC, const ArgList &Args)
-    : ToolChain(D, Triple, Args), HostTC(HostTC) {
+                             const ToolChain &HostTC, const ArgList &Args,
+                           const Action::OffloadKind OK,
+                           const bool isHipAutomaticMode = false)
+    : ToolChain(D, Triple, Args), HostTC(HostTC), OK(OK) {
   // Lookup binaries into the driver directory, this is used to
   // discover the clang-offload-bundler executable.
   getProgramPaths().push_back(getDriver().Dir);
+  HIPAutomaticMode = isHipAutomaticMode;
 }
 
 void HIPToolChain::addClangTargetOptions(
@@ -361,12 +371,62 @@ HIPToolChain::GetCXXStdlibType(const ArgList &Args) const {
 
 void HIPToolChain::AddClangSystemIncludeArgs(const ArgList &DriverArgs,
                                               ArgStringList &CC1Args) const {
+  // HCC2: Get includes from compiler installation
+  const Driver &D = HostTC.getDriver();
+  CC1Args.push_back("-internal-isystem");
+  CC1Args.push_back(DriverArgs.MakeArgString(D.Dir + "/../include"));
   HostTC.AddClangSystemIncludeArgs(DriverArgs, CC1Args);
+  // HIP headers need the cuda_wrappers in include path
+
+  CC1Args.push_back("-internal-isystem");
+  SmallString<128> P(HostTC.getDriver().ResourceDir);
+  llvm::sys::path::append(P, "include/cuda_wrappers");
+  CC1Args.push_back(DriverArgs.MakeArgString(P));
 }
 
 void HIPToolChain::AddClangCXXStdlibIncludeArgs(const ArgList &Args,
                                                  ArgStringList &CC1Args) const {
   HostTC.AddClangCXXStdlibIncludeArgs(Args, CC1Args);
+  if (HIPAutomaticMode) {
+    StringRef autohead = Args.getLastArgValue(options::OPT_hip_auto_headers_EQ);
+    if (autohead.empty() || autohead.equals("hip")) {
+      CC1Args.push_back("-include");
+      SmallString<128> P(HostTC.getDriver().ResourceDir);
+      llvm::sys::path::append(P, "/include/__clang_hip_automatic_hip.h");
+      CC1Args.push_back(Args.MakeArgString(P));
+    } else if (autohead.equals("cuda_open")) {
+      CC1Args.push_back("-include");
+      SmallString<128> P(HostTC.getDriver().ResourceDir);
+      llvm::sys::path::append(P, "/include/__clang_hip_automatic_cuda_open.h");
+      CC1Args.push_back(Args.MakeArgString(P));
+
+      CC1Args.push_back("-internal-isystem");
+      P = HostTC.getDriver().ResourceDir;
+      llvm::sys::path::append(P, "include/cuda_wrappers");
+      CC1Args.push_back(Args.MakeArgString(P));
+
+      CC1Args.push_back("-internal-isystem");
+      P = HostTC.getDriver().ResourceDir;
+      llvm::sys::path::append(P, "include/cuda_open");
+      CC1Args.push_back(Args.MakeArgString(P));
+    } else if (autohead.equals("cuda")) {
+      // Consider switch to cuda_open if no cuda sdk installed
+      CC1Args.push_back("-include");
+      SmallString<128> P(HostTC.getDriver().ResourceDir);
+      llvm::sys::path::append(P, "/include/__clang_hip_automatic_cuda.h");
+      CC1Args.push_back(Args.MakeArgString(P));
+
+      CC1Args.push_back("-internal-isystem");
+      P = HostTC.getDriver().ResourceDir;
+      llvm::sys::path::append(P, "include/cuda_wrappers");
+      CC1Args.push_back(Args.MakeArgString(P));
+
+      CC1Args.push_back("-internal-isystem");
+      CC1Args.push_back(Args.MakeArgString("/usr/local/cuda/include"));
+    } else
+      getDriver().Diag(diag::err_drv_hip_invalid_auto_header) << autohead;
+  } // end if( HIPAutomaticMode
+
 }
 
 void HIPToolChain::AddIAMCUIncludeArgs(const ArgList &Args,

@@ -3321,6 +3321,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   }
 
   if (IsCuda || IsHIP) {
+    CmdArgs.push_back("-std=c++11");
     // We have to pass the triple of the host if compiling for a CUDA/HIP device
     // and vice-versa.
     std::string NormalizedTriple;
@@ -3348,6 +3349,9 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
             .normalize();
     CmdArgs.push_back("-aux-triple");
     CmdArgs.push_back(Args.MakeArgString(NormalizedTriple));
+    // Treat all c++ device code as if it is c++11
+    if (types::isCXX(Input.getType()))
+      CmdArgs.push_back("-std=c++11");
   }
 
   if (Triple.isOSWindows() && (Triple.getArch() == llvm::Triple::arm ||
@@ -4492,7 +4496,8 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   ToolChain::RTTIMode RTTIMode = TC.getRTTIMode();
 
   if (KernelOrKext || (types::isCXX(InputType) &&
-                       (RTTIMode == ToolChain::RM_Disabled)))
+                       (IsCuda || IsHIP || IsOpenMPDevice ||
+                       (RTTIMode == ToolChain::RM_Disabled))))
     CmdArgs.push_back("-fno-rtti");
 
   // -fshort-enums=0 is default for all architectures except Hexagon.
@@ -4966,7 +4971,11 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     assert(Output.isNothing() && "Invalid output.");
   }
 
-  addDashXForInput(Args, Input, CmdArgs);
+  if (IsHIP) {
+    CmdArgs.push_back("-x");
+    CmdArgs.push_back("hip");
+  } else
+    addDashXForInput(Args, Input, CmdArgs);
 
   ArrayRef<InputInfo> FrontendInputs = Input;
   if (IsHeaderModulePrecompile)
@@ -5011,14 +5020,18 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
 
   // Host-side cuda compilation receives all device-side outputs in a single
   // fatbin as Inputs[1]. Include the binary with -fcuda-include-gpubinary.
-  if ((IsCuda || IsHIP) && CudaDeviceInput) {
+  // TODO schi if ((IsCuda || IsHIP) && CudaDeviceInput) {
+  if ( IsCuda && CudaDeviceInput) {
       CmdArgs.push_back("-fcuda-include-gpubinary");
       CmdArgs.push_back(CudaDeviceInput->getFilename());
       if (Args.hasFlag(options::OPT_fgpu_rdc, options::OPT_fno_gpu_rdc, false))
         CmdArgs.push_back("-fgpu-rdc");
   }
 
-  if (IsCuda) {
+  // TODO schi if (IsCuda) {
+  if (IsCuda || IsHIP) {
+    if (Args.hasFlag(options::OPT_fgpu_rdc, options::OPT_fno_gpu_rdc, false))
+      CmdArgs.push_back("-fgpu-rdc");
     if (Args.hasFlag(options::OPT_fcuda_short_ptr,
                      options::OPT_fno_cuda_short_ptr, false))
       CmdArgs.push_back("-fcuda-short-ptr");
