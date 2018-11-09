@@ -192,6 +192,11 @@ set(cuda_open_files
 set(hip_files
   hip/hip_host_runtime_api.h
   hip/hip_common.h
+  hip/driver_types.h
+)
+
+set(hip_hcc_files
+  hip/hcc_detail/driver_types.h
 )
 
 install(
@@ -199,6 +204,12 @@ install(
   COMPONENT clang-headers
   PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ
   DESTINATION lib${LLVM_LIBDIR_SUFFIX}/clang/${CLANG_VERSION}/include/hip)
+
+install(
+  FILES ${hip_hcc_files}
+  COMPONENT clang-headers
+  PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ
+  DESTINATION lib${LLVM_LIBDIR_SUFFIX}/clang/${CLANG_VERSION}/include/hip/hcc_detail)
 
 install(
   FILES ${cuda_open_files}
