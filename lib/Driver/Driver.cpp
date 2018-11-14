@@ -2667,10 +2667,18 @@ class OffloadingActionBuilder final {
       }
 
       // By default, we produce an action for each device arch.
-      for (Action *&A : CudaDeviceActions)
+      // TODO schi add it
+      bool LastActionIsCompile = false;
+      for (Action *&A : CudaDeviceActions) {
         A = C.getDriver().ConstructPhaseAction(C, Args, CurPhase, A,
                                                AssociatedOffloadKind);
+        LastActionIsCompile =
+            (A->getKind() == Action::ActionClass::CompileJobClass);
+      }
 
+      // Avoid creating host action in device-only mode.
+      return (CompileDeviceOnly && LastActionIsCompile) ? ABRT_Ignore_Host
+                                                        : ABRT_Success;
       return ABRT_Success;
     }
 
