@@ -25,3 +25,7 @@ on the Clang development mailing list:
 If you find a bug in Clang, please file it in the LLVM bug tracker:
   http://llvm.org/bugs/
 
+
+ This is development branch HCC2-181213 .
+ Throw this first marker commit away when making future development branches
+
