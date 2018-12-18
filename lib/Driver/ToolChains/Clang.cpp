@@ -3233,6 +3233,11 @@ static void RenderDebugOptions(const ToolChain &TC, const Driver &D,
     }
   }
 
+  // FIXME: temporarily Turn off debuging on GPUs for openmp
+  if ((T.getArch() == llvm::Triple::amdgcn) ||
+      (T.getArch() == llvm::Triple::nvptx64))
+    DebugInfoKind = codegenoptions::NoDebugInfo;
+
   RenderDebugEnablingArgs(Args, CmdArgs, DebugInfoKind, DWARFVersion,
                           DebuggerTuning);
 
@@ -3396,6 +3401,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   }
 
   if (IsCuda || IsHIP) {
+    CmdArgs.push_back("-std=c++11");
     // We have to pass the triple of the host if compiling for a CUDA/HIP device
     // and vice-versa.
     std::string NormalizedTriple;
@@ -3423,6 +3429,9 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
             .normalize();
     CmdArgs.push_back("-aux-triple");
     CmdArgs.push_back(Args.MakeArgString(NormalizedTriple));
+    // Treat all c++ device code as if it is c++11
+    if (types::isCXX(Input.getType()))
+      CmdArgs.push_back("-std=c++11");
   }
 
   if (Triple.isOSWindows() && (Triple.getArch() == llvm::Triple::arm ||
@@ -4562,7 +4571,8 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   ToolChain::RTTIMode RTTIMode = TC.getRTTIMode();
 
   if (KernelOrKext || (types::isCXX(InputType) &&
-                       (RTTIMode == ToolChain::RM_Disabled)))
+                       (IsCuda || IsHIP || IsOpenMPDevice ||
+                       (RTTIMode == ToolChain::RM_Disabled))))
     CmdArgs.push_back("-fno-rtti");
 
   // -fshort-enums=0 is default for all architectures except Hexagon.
@@ -4850,7 +4860,11 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   // Enable vectorization per default according to the optimization level
   // selected. For optimization levels that want vectorization we use the alias
   // option to simplify the hasFlag logic.
-  bool EnableVec = shouldEnableVectorizerAtOLevel(Args, false);
+  // Do not vectorize on GPUs
+  // FIXME: Temporarily turn off vectorization for GPUs
+  bool EnableVec = shouldEnableVectorizerAtOLevel(Args, false) &&
+                   !(Triple.getArch() == llvm::Triple::amdgcn ||
+                     Triple.getArch() == llvm::Triple::nvptx64);
   OptSpecifier VectorizeAliasOption =
       EnableVec ? options::OPT_O_Group : options::OPT_fvectorize;
   if (Args.hasFlag(options::OPT_fvectorize, VectorizeAliasOption,
@@ -4858,7 +4872,9 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back("-vectorize-loops");
 
   // -fslp-vectorize is enabled based on the optimization level selected.
-  bool EnableSLPVec = shouldEnableVectorizerAtOLevel(Args, true);
+  bool EnableSLPVec = shouldEnableVectorizerAtOLevel(Args, true) &&
+                      !(Triple.getArch() == llvm::Triple::amdgcn ||
+                        Triple.getArch() == llvm::Triple::nvptx64);
   OptSpecifier SLPVectAliasOption =
       EnableSLPVec ? options::OPT_O_Group : options::OPT_fslp_vectorize;
   if (Args.hasFlag(options::OPT_fslp_vectorize, SLPVectAliasOption,
@@ -5036,7 +5052,11 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     assert(Output.isNothing() && "Invalid output.");
   }
 
-  addDashXForInput(Args, Input, CmdArgs);
+  if (IsHIP) {
+    CmdArgs.push_back("-x");
+    CmdArgs.push_back("hip");
+  } else
+    addDashXForInput(Args, Input, CmdArgs);
 
   ArrayRef<InputInfo> FrontendInputs = Input;
   if (IsHeaderModulePrecompile)

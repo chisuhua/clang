@@ -83,6 +83,8 @@ void AddAssemblerKPIC(const ToolChain &ToolChain,
                       const llvm::opt::ArgList &Args,
                       llvm::opt::ArgStringList &CmdArgs);
 
+std::string FindDebugInLibraryPath();
+
 void addArchSpecificRPath(const ToolChain &TC, const llvm::opt::ArgList &Args,
                           llvm::opt::ArgStringList &CmdArgs);
 /// Returns true, if an OpenMP runtime has been added.
@@ -122,6 +124,18 @@ void handleTargetFeaturesGroup(const llvm::opt::ArgList &Args,
 SmallString<128> getStatsFileName(const llvm::opt::ArgList &Args,
                                   const InputInfo &Output,
                                   const InputInfo &Input, const Driver &D);
+
+/// Search for the Device bc Lib BCNAME, in a list of library paths.
+bool DBCLSearch(const llvm::opt::ArgList &DriverArgs,
+                llvm::opt::ArgStringList &CC1Args,
+                SmallVector<StringRef, 8> LibraryPaths, const char *BCName,
+                bool postClangLink = false);
+
+/// Add OpenMP Device bc Libs (DBCLs) from -l options
+void AddOpenMPDBCLs(const llvm::opt::ArgList &DriverArgs,
+                    llvm::opt::ArgStringList &CC1Args, StringRef GpuArch,
+                    const Driver &D, bool postClangLink = false);
+
 } // end namespace tools
 } // end namespace driver
 } // end namespace clang

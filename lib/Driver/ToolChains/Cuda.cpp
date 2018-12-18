@@ -650,46 +650,8 @@ void CudaToolChain::addClangTargetOptions(
                          options::OPT_fno_cuda_short_ptr, false))
     CC1Args.append({"-mllvm", "--nvptx-short-ptr"});
 
-  if (DeviceOffloadingKind == Action::OFK_OpenMP) {
-    SmallVector<StringRef, 8> LibraryPaths;
-
-    if (const Arg *A = DriverArgs.getLastArg(options::OPT_libomptarget_nvptx_path_EQ))
-      LibraryPaths.push_back(A->getValue());
-
-    // Add user defined library paths from LIBRARY_PATH.
-    llvm::Optional<std::string> LibPath =
-        llvm::sys::Process::GetEnv("LIBRARY_PATH");
-    if (LibPath) {
-      SmallVector<StringRef, 8> Frags;
-      const char EnvPathSeparatorStr[] = {llvm::sys::EnvPathSeparator, '\0'};
-      llvm::SplitString(*LibPath, Frags, EnvPathSeparatorStr);
-      for (StringRef Path : Frags)
-        LibraryPaths.emplace_back(Path.trim());
-    }
-
-    // Add path to lib / lib64 folder.
-    SmallString<256> DefaultLibPath =
-        llvm::sys::path::parent_path(getDriver().Dir);
-    llvm::sys::path::append(DefaultLibPath, Twine("lib") + CLANG_LIBDIR_SUFFIX);
-    LibraryPaths.emplace_back(DefaultLibPath.c_str());
-
-    std::string LibOmpTargetName =
-      "libomptarget-nvptx-" + GpuArch.str() + ".bc";
-    bool FoundBCLibrary = false;
-    for (StringRef LibraryPath : LibraryPaths) {
-      SmallString<128> LibOmpTargetFile(LibraryPath);
-      llvm::sys::path::append(LibOmpTargetFile, LibOmpTargetName);
-      if (llvm::sys::fs::exists(LibOmpTargetFile)) {
-        CC1Args.push_back("-mlink-builtin-bitcode");
-        CC1Args.push_back(DriverArgs.MakeArgString(LibOmpTargetFile));
-        FoundBCLibrary = true;
-        break;
-      }
-    }
-    if (!FoundBCLibrary)
-      getDriver().Diag(diag::warn_drv_omp_offload_target_missingbcruntime)
-          << LibOmpTargetName;
-  }
+  if (DeviceOffloadingKind == Action::OFK_OpenMP)
+    AddOpenMPDBCLs(DriverArgs, CC1Args, GpuArch, getDriver(), true);
 }
 
 bool CudaToolChain::supportsDebugInfoOption(const llvm::opt::Arg *A) const {
@@ -813,6 +775,10 @@ CudaToolChain::GetCXXStdlibType(const ArgList &Args) const {
 
 void CudaToolChain::AddClangSystemIncludeArgs(const ArgList &DriverArgs,
                                               ArgStringList &CC1Args) const {
+  // For HCC2, pick up includes from compiler install include path first
+  const Driver &D = HostTC.getDriver();
+  CC1Args.push_back("-internal-isystem");
+  CC1Args.push_back(DriverArgs.MakeArgString(D.Dir + "/../include"));
   HostTC.AddClangSystemIncludeArgs(DriverArgs, CC1Args);
 }
 

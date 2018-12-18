@@ -8503,6 +8503,10 @@ bool CGOpenMPRuntime::emitTargetGlobalVariable(GlobalDecl GD) {
 
 void CGOpenMPRuntime::registerTargetGlobalVariable(const VarDecl *VD,
                                                    llvm::Constant *Addr) {
+  // Exclude local constants that have no external storage
+  if (!VD->hasExternalStorage())
+    return;
+
   llvm::Optional<OMPDeclareTargetDeclAttr::MapTypeTy> Res =
       OMPDeclareTargetDeclAttr::isDeclareTargetDeclaration(VD);
   if (!Res) {
