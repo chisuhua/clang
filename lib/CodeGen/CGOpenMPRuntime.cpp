@@ -2916,11 +2916,16 @@ CGOpenMPRuntime::getOrCreateInternalVariable(llvm::Type *Ty,
            "OMP internal variable has different type than requested");
     return &*Elem.second;
   }
-
-  return Elem.second = new llvm::GlobalVariable(
-             CGM.getModule(), Ty, /*IsConstant*/ false,
-             llvm::GlobalValue::CommonLinkage, llvm::Constant::getNullValue(Ty),
-             Elem.first());
+  if (CGM.getTriple().getArch() == llvm::Triple::amdgcn)
+    return Elem.second = new llvm::GlobalVariable(
+               CGM.getModule(), Ty, /*IsConstant*/ false,
+               llvm::GlobalValue::PrivateLinkage,
+               llvm::Constant::getNullValue(Ty), Elem.first());
+  else
+    return Elem.second = new llvm::GlobalVariable(
+               CGM.getModule(), Ty, /*IsConstant*/ false,
+               llvm::GlobalValue::CommonLinkage,
+               llvm::Constant::getNullValue(Ty), Elem.first());
 }
 
 llvm::Value *CGOpenMPRuntime::getCriticalRegionLock(StringRef CriticalName) {
