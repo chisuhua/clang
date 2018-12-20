@@ -4545,8 +4545,12 @@ void CGOpenMPRuntimeNVPTX::adjustTargetSpecificDataForLambdas(
 
 // Get current CudaArch and ignore any unknown values
 static CudaArch getCudaArch(CodeGenModule &CGM) {
-  if (!CGM.getTarget().hasFeature("ptx"))
+  if (!CGM.getTarget().hasFeature("ptx") &&
+      (CGM.getTriple().getArch() != llvm::Triple::amdgcn))
     return CudaArch::UNKNOWN;
+  if (CGM.getTriple().getArch() == llvm::Triple::amdgcn)
+    return StringToCudaArch(CGM.getTarget().getTargetOpts().CPU);
+  // FIXME: Can we always just regurn StringToCudaArch(...CPU) here?
   llvm::StringMap<bool> Features;
   CGM.getTarget().initFeatureMap(Features, CGM.getDiags(),
                                  CGM.getTarget().getTargetOpts().CPU,
@@ -4643,18 +4647,22 @@ static std::pair<unsigned, unsigned> getSMsBlocksPerSM(CodeGenModule &CGM) {
   case CudaArch::GFX601:
   case CudaArch::GFX700:
   case CudaArch::GFX701:
+    return {44, 64}; // Hawaii
   case CudaArch::GFX702:
   case CudaArch::GFX703:
   case CudaArch::GFX704:
   case CudaArch::GFX801:
   case CudaArch::GFX802:
+    return {28, 64}; // Tonga
   case CudaArch::GFX803:
+    return {64, 64}; // FIXME: Verify these settings or get autmatically
   case CudaArch::GFX810:
   case CudaArch::GFX900:
   case CudaArch::GFX902:
   case CudaArch::GFX904:
   case CudaArch::GFX906:
   case CudaArch::GFX909:
+    return {64, 64};
   case CudaArch::UNKNOWN:
     break;
   case CudaArch::LAST:
@@ -4749,11 +4757,15 @@ void CGOpenMPRuntimeNVPTX::clear() {
       QualType Arr2Ty = C.getConstantArrayType(Arr1Ty, Size2, ArrayType::Normal,
                                                /*IndexTypeQuals=*/0);
       llvm::Type *LLVMArr2Ty = CGM.getTypes().ConvertTypeForMem(Arr2Ty);
-      auto *GV = new llvm::GlobalVariable(
-          CGM.getModule(), LLVMArr2Ty,
-          /*isConstant=*/false, llvm::GlobalValue::CommonLinkage,
-          llvm::Constant::getNullValue(LLVMArr2Ty),
-          "_openmp_static_glob_rd_$_");
+      llvm::GlobalValue::LinkageTypes Linkage =
+          (CGM.getTriple().getArch() == llvm::Triple::amdgcn)
+              ? llvm::GlobalValue::PrivateLinkage
+              : llvm::GlobalValue::CommonLinkage;
+      auto *GV =
+          new llvm::GlobalVariable(CGM.getModule(), LLVMArr2Ty,
+                                   /*IsConstant*/ false, Linkage,
+                                   llvm::Constant::getNullValue(LLVMArr2Ty),
+                                   "_openmp_static_glob_rd_$_");
 
       auto *Replacement = llvm::ConstantExpr::getPointerBitCastOrAddrSpaceCast(
           GV, CGM.VoidPtrTy);
