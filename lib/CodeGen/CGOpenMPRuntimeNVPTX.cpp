@@ -19,6 +19,7 @@
 #include "clang/AST/StmtVisitor.h"
 #include "clang/Basic/Cuda.h"
 #include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/IR/Metadata.h"
 
 using namespace clang;
 using namespace CodeGen;
@@ -1308,6 +1309,57 @@ void CGOpenMPRuntimeNVPTX::emitNonSPMDKernel(const OMPExecutableDirective &D,
 
   // Create the worker function
   emitWorkerFunction(WST);
+
+  // If constant ThreadLimit(), set reqd_work_group_size metadata
+  if ((CGM.getTriple().getArch() == llvm::Triple::amdgcn) &&
+      (isOpenMPTeamsDirective(D.getDirectiveKind()) ||
+       isOpenMPParallelDirective(D.getDirectiveKind()))) {
+    llvm::LLVMContext &Ctx = CGM.getLLVMContext();
+    bool wgs_is_constant = false;
+    const auto *ThreadLimitClause = D.getSingleClause<OMPThreadLimitClause>();
+    const auto *NumThreadsClause = D.getSingleClause<OMPNumThreadsClause>();
+    int MaxWorkGroupSz =
+        CGM.getTarget().getGridValue(GPU::GVIDX::GV_Max_WG_Size);
+    if (ThreadLimitClause && !NumThreadsClause) {
+      Expr *ThreadLimitExpr = ThreadLimitClause->getThreadLimit();
+      clang::Expr::EvalResult Result;
+      // Add kernel metadata if ThreadLimit Clause is compile time constant > 0
+      if (ThreadLimitExpr->EvaluateAsInt(Result, CGM.getContext())) {
+        int compileTimeThreadLimit = Result.Val.getInt().getExtValue();
+        if (compileTimeThreadLimit > 0) {
+          // Limit flat workgroup size just like the runtime would limit it
+          if (compileTimeThreadLimit > MaxWorkGroupSz)
+            compileTimeThreadLimit = MaxWorkGroupSz;
+          // printf("========= WARNING CONSTANT Compile-Time TL: %d\n",
+          //       compileTimeThreadLimit);
+          llvm::Metadata *AttrMDArgs[] = {
+              llvm::ConstantAsMetadata::get(llvm::ConstantInt::get(
+                  llvm::Type::getInt32Ty(Ctx), compileTimeThreadLimit)),
+              llvm::ConstantAsMetadata::get(
+                  llvm::ConstantInt::get(llvm::Type::getInt32Ty(Ctx), 1)),
+              llvm::ConstantAsMetadata::get(
+                  llvm::ConstantInt::get(llvm::Type::getInt32Ty(Ctx), 1))};
+          OutlinedFn->setMetadata("reqd_work_group_size",
+                                  llvm::MDNode::get(Ctx, AttrMDArgs));
+          OutlinedFn->setMetadata("work_group_size_hint",
+                                  llvm::MDNode::get(Ctx, AttrMDArgs));
+          wgs_is_constant = true;
+        } // end   > 0
+      }
+    }
+    // If not constant, at least hint what the hard limit will be
+    if (!wgs_is_constant) {
+      llvm::Metadata *AttrMDArgs[] = {
+          llvm::ConstantAsMetadata::get(llvm::ConstantInt::get(
+              llvm::Type::getInt32Ty(Ctx), MaxWorkGroupSz)),
+          llvm::ConstantAsMetadata::get(
+              llvm::ConstantInt::get(llvm::Type::getInt32Ty(Ctx), 1)),
+          llvm::ConstantAsMetadata::get(
+              llvm::ConstantInt::get(llvm::Type::getInt32Ty(Ctx), 1))};
+      OutlinedFn->setMetadata("work_group_size_hint",
+                              llvm::MDNode::get(Ctx, AttrMDArgs));
+    }
+  } // end of amdgcn teams or parallel directive
 }
 
 // Setup NVPTX threads for master-worker OpenMP scheme.
