@@ -74,7 +74,9 @@ enum GVIDX {
   // An alternative to the heavy data sharing infrastructure that uses global
   // memory is one that uses device __shared__ memory.  The amount of such space
   // (in bytes) reserved by the OpenMP runtime is noted here.
-  GV_SimpleBufferSize
+  GV_SimpleBufferSize,
+  // The maximum team size for a working group
+  GV_Max_WG_Size
 };
 
 enum GVLIDX {
@@ -83,26 +85,26 @@ enum GVLIDX {
   GV_Warp_Size_Log2_MaskL
 };
 
-} // namespace GPU
 
 /// For AMDGPU GPUs
-static const int AMDGPUGpuGridValues[] = {
+static constexpr int AMDGPUGpuGridValues[] = {
     448,      // GV_Threads   FIXME:  How can we make this bigger?
     256,      // GV_Slot_Size
     64,       // GV_Warp_Size
     6,        // GV_Warp_Size_Log2
     64 * 256, // GV_Warp_Slot_Size
     128,      // GV_Max_Teams
-    256,
-    63, // GV_Warp_Size_Log2_Mask
-    896 // GV_SimpleBufferSize
+    256,      // GV_Mem_Align
+    63,       // GV_Warp_Size_Log2_Mask
+    896,      // GV_SimpleBufferSize
+    256       // GV_Max_WG_Size
 };
-static const long long AMDGPUGpuLongGridValues[] = {
+static constexpr long long AMDGPUGpuLongGridValues[] = {
     63 // GV_Warp_Size_Log2_MaskL
 };
 
 /// For Nvidia GPUs
-static const int NVPTXGpuGridValues[] = {
+static constexpr int NVPTXGpuGridValues[] = {
     992,               // GV_Threads
     256,               // GV_Slot_Size
     32,                // GV_Warp_Size
@@ -111,12 +113,14 @@ static const int NVPTXGpuGridValues[] = {
     1024,              // GV_Max_Teams
     256,               // GV_Mem_Align
     (~0u >> (32 - 5)), // GV_Warp_Size_Log2_Mask
-    896                // GV_SimpleBufferSize
+    896,               // GV_SimpleBufferSize
+    1024               // GV_Max_WG_Size
 };
 
-static const long long NVPTXGpuLongGridValues[] = {
+static constexpr long long NVPTXGpuLongGridValues[] = {
     31 // GV_Warp_Size_Log2_MaskL
 };
 
+} // namespace GPU
 } // namespace clang
 #endif

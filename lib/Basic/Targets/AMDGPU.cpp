@@ -246,8 +246,8 @@ AMDGPUTargetInfo::AMDGPUTargetInfo(const llvm::Triple &Triple,
   resetDataLayout(isAMDGCN(getTriple()) ? DataLayoutStringAMDGCN
                                         : DataLayoutStringR600);
   assert(DataLayout->getAllocaAddrSpace() == Private);
-  GridValues = (const int *)&(AMDGPUGpuGridValues[0]);
-  LongGridValues = (const long long *)&(AMDGPUGpuLongGridValues[0]);
+  GridValues = (const int *)&(GPU::AMDGPUGpuGridValues[0]);
+  LongGridValues = (const long long *)&(GPU::AMDGPUGpuLongGridValues[0]);
 
   setAddressSpaceMap(Triple.getOS() == llvm::Triple::Mesa3D ||
                      !isAMDGCN(Triple));

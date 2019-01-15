@@ -60,8 +60,8 @@ NVPTXTargetInfo::NVPTXTargetInfo(const llvm::Triple &Triple,
   TLSSupported = false;
   VLASupported = false;
   AddrSpaceMap = &NVPTXAddrSpaceMap;
-  GridValues = (const int *)&(NVPTXGpuGridValues[0]);
-  LongGridValues = (const long long *)&(NVPTXGpuLongGridValues[0]);
+  GridValues = (const int *)&(GPU::NVPTXGpuGridValues[0]);
+  LongGridValues = (const long long *)&(GPU::NVPTXGpuLongGridValues[0]);
   UseAddrSpaceMapMangling = true;
 
   // Define available target features
