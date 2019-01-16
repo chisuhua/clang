@@ -125,6 +125,16 @@ SmallString<128> getStatsFileName(const llvm::opt::ArgList &Args,
                                   const InputInfo &Output,
                                   const InputInfo &Input, const Driver &D);
 
+/// Search for Static Device Libs
+bool ArFileSearch(const llvm::opt::ArgList &DriverArgs,
+                  llvm::opt::ArgStringList &CC1Args,
+                  llvm::opt::ArgStringList &LibraryPaths, const char *ArName);
+
+/// Add Static Device Lib Archive for each input -l option
+void AddDeviceArLibs(const llvm::opt::ArgList &DriverArgs,
+                     llvm::opt::ArgStringList &CC1Args, StringRef GpuArch,
+                     const Driver &D, llvm::opt::ArgStringList &LibraryPaths);
+
 /// Search for the Device bc Lib BCNAME, in a list of library paths.
 bool DBCLSearch(const llvm::opt::ArgList &DriverArgs,
                 llvm::opt::ArgStringList &CC1Args,

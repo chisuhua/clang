@@ -1524,6 +1524,65 @@ SmallString<128> tools::getStatsFileName(const llvm::opt::ArgList &Args,
   return StatsFile;
 }
 
+bool tools::ArFileSearch(const llvm::opt::ArgList &DriverArgs,
+                         llvm::opt::ArgStringList &CC1Args,
+                         llvm::opt::ArgStringList &LibraryPaths,
+                         const char *ArName) {
+  bool FoundArLibrary = false;
+  for (StringRef LibraryPath : LibraryPaths) {
+    SmallString<128> ArFile_FileName(LibraryPath);
+    llvm::sys::path::append(ArFile_FileName, ArName);
+    if (llvm::sys::fs::exists(ArFile_FileName)) {
+      FoundArLibrary = true;
+      CC1Args.push_back(DriverArgs.MakeArgString(ArFile_FileName));
+      break;
+    }
+  }
+  return FoundArLibrary;
+}
+
+void tools::AddDeviceArLibs(const llvm::opt::ArgList &DriverArgs,
+                            llvm::opt::ArgStringList &CC1Args,
+                            StringRef GpuArch, const Driver &D,
+                            llvm::opt::ArgStringList &LibraryPaths) {
+
+  // Build list of Static Device Archive Libraries from each -l option
+  SmallVector<std::string, 16> ArFiles;
+  for (std::string Lib : DriverArgs.getAllArgValues(options::OPT_l)) {
+    // No device ArFile for omp or cudart
+    if (Lib != "omp" && Lib != "cudart") {
+      bool inArFiles = false;
+      for (std::string archive_name : ArFiles) {
+        if (archive_name == Lib)
+          inArFiles = true;
+      }
+      if (!inArFiles) // Avoid duplicates in list of  ArFiles to search for
+        ArFiles.emplace_back(Lib);
+    }
+  }
+  // First search using libdevice naming convention
+  std::string libdevice_dir = "libdevice/" + GpuArch.str() + "/";
+  std::string suffix = GpuArch.startswith("gfx")
+                           ? "-amdgcn-" + GpuArch.str() + ".a"
+                           : "-nvptx-" + GpuArch.str() + ".a";
+  for (std::string archive_name : ArFiles) {
+    bool FoundArLibrary = false;
+    std::string ShortLibName = "lib" + archive_name + suffix;
+    std::string LibName = libdevice_dir + ShortLibName;
+    FoundArLibrary =
+        ArFileSearch(DriverArgs, CC1Args, LibraryPaths, LibName.c_str());
+    // If not found with libdevice naming convention,
+    // try looking in the directory name (ShortLibName)
+    if (!FoundArLibrary) {
+      // printf("Searching for shortname %s\n",ShortLibName.c_str());
+      FoundArLibrary =
+          ArFileSearch(DriverArgs, CC1Args, LibraryPaths, ShortLibName.c_str());
+      if (!FoundArLibrary)
+        printf("Could not find %s\n", ShortLibName.c_str());
+    }
+  } // end search for each ArFiles
+}
+
 bool tools::DBCLSearch(const llvm::opt::ArgList &DriverArgs,
                        llvm::opt::ArgStringList &CC1Args,
                        SmallVector<StringRef, 8> LibraryPaths,
