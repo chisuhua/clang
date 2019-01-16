@@ -11,12 +11,14 @@
 #include "CommonArgs.h"
 #include "InputInfo.h"
 #include "clang/Basic/Cuda.h"
+#include "clang/Config/config.h"
 #include "clang/Driver/Compilation.h"
 #include "clang/Driver/Driver.h"
 #include "clang/Driver/DriverDiagnostic.h"
 #include "clang/Driver/Options.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Path.h"
+#include "llvm/Support/Process.h"
 
 using namespace clang::driver;
 using namespace clang::driver::toolchains;
@@ -57,6 +59,7 @@ const char *AMDGCN::Linker::constructOmpExtraCmds(Compilation &C,
   const char *OutputFileName =
       C.addTempFile(C.getArgs().MakeArgString(TmpName));
   ArgStringList CmdArgs;
+  //CmdArgs.push_back("-v");
   llvm::SmallVector<std::string, 10> BCLibs;
   for (const auto &II : Inputs) {
     if (II.isFilename())
@@ -81,6 +84,25 @@ const char *AMDGCN::Linker::constructOmpExtraCmds(Compilation &C,
   for (auto Lib : BCLibs)
     addBCLib(C, Args, CmdArgs, LibraryPaths, Lib);
 
+  // Add user-defined library paths from LIBRARY_PATH.
+  llvm::Optional<std::string> LibPath =
+      llvm::sys::Process::GetEnv("LIBRARY_PATH");
+  if (LibPath) {
+    SmallVector<StringRef, 8> Frags;
+    const char EnvPathSeparatorStr[] = {llvm::sys::EnvPathSeparator, '\0'};
+    llvm::SplitString(*LibPath, Frags, EnvPathSeparatorStr);
+    for (StringRef Path : Frags)
+      LibraryPaths.push_back(Args.MakeArgString(Path.trim()));
+  }
+
+  // Add path to lib and/or lib64 or lib-debug folders
+  SmallString<256> DefaultLibPath =
+      llvm::sys::path::parent_path(C.getDriver().Dir);
+  llvm::sys::path::append(DefaultLibPath, Twine("lib") + CLANG_LIBDIR_SUFFIX);
+  LibraryPaths.emplace_back(DefaultLibPath.c_str());
+
+  // Search for static device archive libs. That is .a files for -l args
+  AddDeviceArLibs(Args, CmdArgs, SubArchName, C.getDriver(), LibraryPaths);
   // search and add DBCLs specified by user with -l flag
   // but dont use clang flag -mlinkbuiltin-bitcode postClangLink=false
   AddOpenMPDBCLs(Args, CmdArgs, SubArchName, C.getDriver(), false);
