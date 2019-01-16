@@ -25,10 +25,14 @@
 #include "llvm/IR/DiagnosticPrinter.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/LLVMContext.h"
+#include "llvm/IR/LegacyPassManager.h"
+#include "llvm/IR/LegacyPassNameParser.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/IRReader/IRReader.h"
 #include "llvm/Linker/Linker.h"
+#include "llvm/Object/Archive.h"
+#include "llvm/Object/ArchiveWriter.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/InitLLVM.h"
@@ -37,16 +41,14 @@
 #include "llvm/Support/SystemUtils.h"
 #include "llvm/Support/ToolOutputFile.h"
 #include "llvm/Support/WithColor.h"
-#include "llvm/Transforms/IPO/FunctionImport.h"
-#include "llvm/Transforms/Utils/FunctionImportUtils.h"
-
-#include "llvm/IR/LegacyPassManager.h"
-#include "llvm/IR/LegacyPassNameParser.h"
 #include "llvm/Transforms/IPO/AlwaysInliner.h"
+#include "llvm/Transforms/IPO/FunctionImport.h"
 #include "llvm/Transforms/IPO/PassManagerBuilder.h"
+#include "llvm/Transforms/Utils/FunctionImportUtils.h"
 
 #include <memory>
 #include <utility>
+
 using namespace llvm;
 
 static cl::list<std::string> InputFilenames(cl::Positional, cl::OneOrMore,
@@ -64,9 +66,100 @@ static cl::opt<bool> Verbose("v",
 
 static ExitOnError ExitOnErr;
 
+/// ---------------------------------------------
+// Show the error message and exit.
+LLVM_ATTRIBUTE_NORETURN static void fail(Twine Error) {
+  errs() << ": " << Error << ".\n";
+  exit(1);
+}
+
+static void failIfError(std::error_code EC, Twine Context = "") {
+  if (!EC)
+    return;
+  std::string ContextStr = Context.str();
+  if (ContextStr == "")
+    fail(EC.message());
+  fail(Context + ": " + EC.message());
+}
+
+static void failIfError(Error E, Twine Context = "") {
+  if (!E)
+    return;
+
+  handleAllErrors(std::move(E), [&](const llvm::ErrorInfoBase &EIB) {
+    std::string ContextStr = Context.str();
+    if (ContextStr == "")
+      fail(EIB.message());
+    fail(Context + ": " + EIB.message());
+  });
+}
+
+static bool loadArFile(const char *argv0, const std::string ArchiveName,
+                       LLVMContext &Context, Linker &L, unsigned OrigFlags,
+                       unsigned ApplicableFlags) {
+  if (Verbose)
+    errs() << "Reading library archive file '" << ArchiveName
+           << "' to memory\n";
+  ErrorOr<std::unique_ptr<MemoryBuffer>> Buf =
+      MemoryBuffer::getFile(ArchiveName, -1, false);
+  if (std::error_code EC = Buf.getError()) {
+    failIfError(EC, Twine("error loading archive'") + ArchiveName + "'");
+  } else {
+    Error Err = Error::success();
+    object::Archive Archive(Buf.get()->getMemBufferRef(), Err);
+    object::Archive *ArchivePtr = &Archive;
+    EC = errorToErrorCode(std::move(Err));
+    failIfError(EC,
+                "error loading '" + ArchiveName + "': " + EC.message() + "!");
+    for (auto &C : ArchivePtr->children(Err)) {
+      Expected<StringRef> ename = C.getName();
+      if (Error E = ename.takeError()) {
+        errs() << argv0 << ": ";
+        WithColor::error()
+            << " could not get member name of archive library failed'"
+            << ArchiveName << "'\n";
+        return false;
+      };
+      std::string goodname = ename.get().str();
+      if (Verbose)
+        errs() << "Parsing member '" << goodname
+               << "' of archive library to module.\n";
+      SMDiagnostic ParseErr;
+      StringRef DataLayoutString;
+      bool UpgradeDebugInfo = false;
+      Expected<MemoryBufferRef> MemBuf = C.getMemoryBufferRef();
+      if (Error E = MemBuf.takeError()) {
+        errs() << argv0 << ": ";
+        WithColor::error() << " loading memory for member '" << goodname
+                           << "' of archive library failed'" << ArchiveName
+                           << "'\n";
+        return false;
+      };
+
+      std::unique_ptr<Module> M = parseIR(MemBuf.get(), ParseErr, Context,
+                                          UpgradeDebugInfo, DataLayoutString);
+      if (!M.get()) {
+        errs() << argv0 << ": ";
+        WithColor::error() << " parsing member '" << goodname
+                           << "' of archive library failed'" << ArchiveName
+                           << "'\n";
+        return false;
+      }
+      if (Verbose)
+        errs() << "Linking member '" << goodname << "' of archive library.\n";
+      bool Err = L.linkInModule(std::move(M), ApplicableFlags);
+      if (Err)
+        return false;
+      ApplicableFlags = OrigFlags;
+    } // end for each child
+    failIfError(std::move(Err));
+  }
+  return true;
+}
+
 // Read bitcode file and return Module.
 static std::unique_ptr<Module>
-loadFile(const char *argv0, const std::string &FN, LLVMContext &Context) {
+loadBcFile(const char *argv0, const std::string &FN, LLVMContext &Context) {
   SMDiagnostic Err;
   if (Verbose)
     errs() << "Loading '" << FN << "'\n";
@@ -90,18 +183,29 @@ static bool linkFiles(const char *argv0, LLVMContext &Context, Linker &L,
   unsigned ApplicableFlags = Flags & Linker::Flags::OverrideFromSrc;
   // Similar to some flags, internalization doesn't apply to the first file.
   for (const auto &File : Files) {
-    std::unique_ptr<Module> M = loadFile(argv0, File, Context);
-    if (!M.get()) {
-      errs() << argv0 << ": ";
-      WithColor::error() << " loading file '" << File << "'\n";
-      return false;
+    const char *Ext = strrchr(File.c_str(), '.');
+    if (!strncmp(Ext, ".a", 2)) {
+      if (Verbose)
+        errs() << "Loading library archive file'" << File << "'\n";
+      bool loadArSuccess =
+          loadArFile(argv0, File, Context, L, Flags, ApplicableFlags);
+      if (!loadArSuccess)
+        return false;
+    } else {
+      if (Verbose)
+        errs() << "Loading bc file'" << File << "'\n";
+      std::unique_ptr<Module> M = loadBcFile(argv0, File, Context);
+      if (!M.get()) {
+        errs() << argv0 << ": ";
+        WithColor::error() << " loading file '" << File << "'\n";
+        return false;
+      }
+      if (Verbose)
+        errs() << "Linking bc File'" << File << "' to module.\n";
+      bool Err = L.linkInModule(std::move(M), ApplicableFlags);
+      if (Err)
+        return false;
     }
-    if (Verbose)
-      errs() << "Linking in '" << File << "'\n";
-    bool Err = L.linkInModule(std::move(M), ApplicableFlags);
-    if (Err)
-      return false;
-
     // All linker flags apply to linking of subsequent files.
     ApplicableFlags = Flags;
   }
