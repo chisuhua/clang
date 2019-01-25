@@ -71,12 +71,11 @@ const char *AMDGCN::Linker::constructOmpExtraCmds(Compilation &C,
   // If device debugging turned on, get bc files from lib-debug dir
   std::string lib_debug_path = FindDebugInLibraryPath();
   if (!lib_debug_path.empty())
-    LibraryPaths.push_back(
-        Args.MakeArgString(lib_debug_path + "/libdevice/" + SubArchName));
+    LibraryPaths.push_back(Args.MakeArgString(lib_debug_path + "/libdevice"));
 
   // Add compiler path libdevice last as lowest priority search
-  LibraryPaths.push_back(Args.MakeArgString(
-      C.getDriver().Dir + "/../lib/libdevice/" + SubArchName));
+  LibraryPaths.push_back(
+      Args.MakeArgString(C.getDriver().Dir + "/../lib/libdevice"));
 
   BCLibs.append(
       {Args.MakeArgString("libomptarget-amdgcn-" + SubArchName + ".bc"),
@@ -84,28 +83,10 @@ const char *AMDGCN::Linker::constructOmpExtraCmds(Compilation &C,
   for (auto Lib : BCLibs)
     addBCLib(C, Args, CmdArgs, LibraryPaths, Lib);
 
-  // Add user-defined library paths from LIBRARY_PATH.
-  llvm::Optional<std::string> LibPath =
-      llvm::sys::Process::GetEnv("LIBRARY_PATH");
-  if (LibPath) {
-    SmallVector<StringRef, 8> Frags;
-    const char EnvPathSeparatorStr[] = {llvm::sys::EnvPathSeparator, '\0'};
-    llvm::SplitString(*LibPath, Frags, EnvPathSeparatorStr);
-    for (StringRef Path : Frags)
-      LibraryPaths.push_back(Args.MakeArgString(Path.trim()));
-  }
-
-  // Add path to lib and/or lib64 or lib-debug folders
-  SmallString<256> DefaultLibPath =
-      llvm::sys::path::parent_path(C.getDriver().Dir);
-  llvm::sys::path::append(DefaultLibPath, Twine("lib") + CLANG_LIBDIR_SUFFIX);
-  LibraryPaths.emplace_back(DefaultLibPath.c_str());
-
-  // Search for static device archive libs. That is .a files for -l args
-  AddDeviceArLibs(Args, CmdArgs, SubArchName, C.getDriver(), LibraryPaths);
-  // search and add DBCLs specified by user with -l flag
-  // but dont use clang flag -mlinkbuiltin-bitcode postClangLink=false
-  AddOpenMPDBCLs(Args, CmdArgs, SubArchName, C.getDriver(), false);
+  // This will find .a and .bc files that match naming convention.
+  AddStaticDeviceLibs(Args, CmdArgs, SubArchName, C.getDriver(),
+                      /* bitcode SDL?*/ true,
+                      /* PostClang Link? */ false);
 
   CmdArgs.push_back("-o");
   CmdArgs.push_back(OutputFileName);
@@ -152,12 +133,11 @@ const char *AMDGCN::Linker::constructLLVMLinkCommand(
   // If device debugging turned on, add specially built bc files
   std::string lib_debug_path = FindDebugInLibraryPath();
   if (!lib_debug_path.empty())
-    LibraryPaths.push_back(
-        Args.MakeArgString(lib_debug_path + "/libdevice/" + SubArchName));
+    LibraryPaths.push_back(Args.MakeArgString(lib_debug_path + "/libdevice"));
 
   // Add compiler path libdevice last as lowest priority search
-  LibraryPaths.push_back(Args.MakeArgString(
-      C.getDriver().Dir + "/../lib/libdevice/" + SubArchName));
+  LibraryPaths.push_back(
+      Args.MakeArgString(C.getDriver().Dir + "/../lib/libdevice"));
 
   llvm::SmallVector<std::string, 10> BCLibs;
 
@@ -424,8 +404,9 @@ void HIPToolChain::addClangTargetOptions(
                          options::OPT_fvisibility_ms_compat))
     CC1Args.append({"-fvisibility", "hidden"});
 
-  if (DeviceOffloadingKind == Action::OFK_OpenMP)
-    AddOpenMPDBCLs(DriverArgs, CC1Args, GpuArch, getDriver(), true);
+  /*  if (DeviceOffloadingKind == Action::OFK_OpenMP)
+      AddOpenMPDBCLs(DriverArgs, CC1Args, GpuArch, getDriver(), true);
+      */
 }
 
 

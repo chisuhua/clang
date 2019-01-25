@@ -1,9 +1,8 @@
 //===--- CommonArgs.h - Args handling for multiple toolchains ---*- C++ -*-===//
 //
-//                     The LLVM Compiler Infrastructure
-//
-// This file is distributed under the University of Illinois Open Source
-// License. See LICENSE.TXT for details.
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
 
@@ -48,6 +47,16 @@ void linkXRayRuntimeDeps(const ToolChain &TC,
 void AddRunTimeLibs(const ToolChain &TC, const Driver &D,
                     llvm::opt::ArgStringList &CmdArgs,
                     const llvm::opt::ArgList &Args);
+
+void AddStaticDeviceLibs(const llvm::opt::ArgList &DriverArgs,
+                         llvm::opt::ArgStringList &CmdArgs, StringRef GpuArch,
+                         const Driver &D, bool isBitCodeSDL,
+                         bool postClangLink);
+
+bool SDLSearch(const llvm::opt::ArgList &DriverArgs,
+               llvm::opt::ArgStringList &CmdArgs,
+               SmallVector<StringRef, 8> LibraryPaths, std::string libname,
+               std::string devtype, bool isBitCodeSDL, bool postClangLink);
 
 void AddOpenMPLinkerScript(const ToolChain &TC, Compilation &C,
                            const InputInfo &Output,
@@ -124,28 +133,6 @@ void handleTargetFeaturesGroup(const llvm::opt::ArgList &Args,
 SmallString<128> getStatsFileName(const llvm::opt::ArgList &Args,
                                   const InputInfo &Output,
                                   const InputInfo &Input, const Driver &D);
-
-/// Search for Static Device Libs
-bool ArFileSearch(const llvm::opt::ArgList &DriverArgs,
-                  llvm::opt::ArgStringList &CC1Args,
-                  llvm::opt::ArgStringList &LibraryPaths, const char *ArName);
-
-/// Add Static Device Lib Archive for each input -l option
-void AddDeviceArLibs(const llvm::opt::ArgList &DriverArgs,
-                     llvm::opt::ArgStringList &CC1Args, StringRef GpuArch,
-                     const Driver &D, llvm::opt::ArgStringList &LibraryPaths);
-
-/// Search for the Device bc Lib BCNAME, in a list of library paths.
-bool DBCLSearch(const llvm::opt::ArgList &DriverArgs,
-                llvm::opt::ArgStringList &CC1Args,
-                SmallVector<StringRef, 8> LibraryPaths, const char *BCName,
-                bool postClangLink = false);
-
-/// Add OpenMP Device bc Libs (DBCLs) from -l options
-void AddOpenMPDBCLs(const llvm::opt::ArgList &DriverArgs,
-                    llvm::opt::ArgStringList &CC1Args, StringRef GpuArch,
-                    const Driver &D, bool postClangLink = false);
-
 } // end namespace tools
 } // end namespace driver
 } // end namespace clang

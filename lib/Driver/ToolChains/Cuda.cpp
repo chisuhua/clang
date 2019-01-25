@@ -650,8 +650,12 @@ void CudaToolChain::addClangTargetOptions(
                          options::OPT_fno_cuda_short_ptr, false))
     CC1Args.append({"-mllvm", "--nvptx-short-ptr"});
 
+  // Add user-specified (-l)  static device libs.
+  // These are bitcode SDLs that get linked with -mlink-builtin-bitcode option
   if (DeviceOffloadingKind == Action::OFK_OpenMP)
-    AddOpenMPDBCLs(DriverArgs, CC1Args, GpuArch, getDriver(), true);
+    AddStaticDeviceLibs(DriverArgs, CC1Args, GpuArch, getDriver(),
+                        /* bitcode SDL?*/ true,
+                        /* PostClang Link? */ true);
 }
 
 bool CudaToolChain::supportsDebugInfoOption(const llvm::opt::Arg *A) const {
