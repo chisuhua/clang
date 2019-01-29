@@ -1527,19 +1527,19 @@ SmallString<128> tools::getStatsFileName(const llvm::opt::ArgList &Args,
 /// SDLSearch: Search for Static Device Library
 bool tools::SDLSearch(const llvm::opt::ArgList &DriverArgs,
                       llvm::opt::ArgStringList &CC1Args,
-                      SmallVector<StringRef, 8> LibraryPaths,
-                      std::string libname, std::string devtype,
-                      bool isBitCodeSDL, bool postClangLink) {
-
-  std::string archname = (devtype.find("gfx") == 0) ? "amdgcn" : "nvptx";
-
+                      SmallVector<std::string, 8> LibraryPaths,
+                      std::string libname, StringRef ArchName,
+                      StringRef GpuArch, bool isBitCodeSDL,
+                      bool postClangLink) {
+  std::string archname = ArchName.str();
+  std::string gpuname = GpuArch.str();
   SmallVector<std::string, 12> SDL_FileNames;
   if (isBitCodeSDL) {
     // For bitcode SDL, search for these 12 relative SDL filenames
     SDL_FileNames.push_back(std::string("/libdevice/libbc-" + libname + "-" +
-                                        archname + "-" + devtype + ".a"));
+                                        archname + "-" + gpuname + ".a"));
     SDL_FileNames.push_back(std::string("/libbc-" + libname + "-" + archname +
-                                        "-" + devtype + ".a"));
+                                        "-" + gpuname + ".a"));
     SDL_FileNames.push_back(
         std::string("/libdevice/libbc-" + libname + "-" + archname + ".a"));
     SDL_FileNames.push_back(
@@ -1547,9 +1547,9 @@ bool tools::SDLSearch(const llvm::opt::ArgList &DriverArgs,
     SDL_FileNames.push_back(std::string("/libdevice/libbc-" + libname + ".a"));
     SDL_FileNames.push_back(std::string("/libbc-" + libname + ".a"));
     SDL_FileNames.push_back(std::string("/libdevice/lib" + libname + "-" +
-                                        archname + "-" + devtype + ".bc"));
+                                        archname + "-" + gpuname + ".bc"));
     SDL_FileNames.push_back(
-        std::string("/lib" + libname + "-" + archname + "-" + devtype + ".bc"));
+        std::string("/lib" + libname + "-" + archname + "-" + gpuname + ".bc"));
     SDL_FileNames.push_back(
         std::string("/libdevice/lib" + libname + "-" + archname + ".bc"));
     SDL_FileNames.push_back(
@@ -1559,9 +1559,9 @@ bool tools::SDLSearch(const llvm::opt::ArgList &DriverArgs,
   } else {
     // Otherwise only 4 names to search for machine-code SDL
     SDL_FileNames.push_back(std::string("/libdevice/lib" + libname + "-" +
-                                        archname + "-" + devtype + ".a"));
+                                        archname + "-" + gpuname + ".a"));
     SDL_FileNames.push_back(
-        std::string("/lib" + libname + "-" + archname + "-" + devtype + ".a"));
+        std::string("/lib" + libname + "-" + archname + "-" + gpuname + ".a"));
     SDL_FileNames.push_back(
         std::string("/libdevice/lib" + libname + "-" + archname + ".a"));
     SDL_FileNames.push_back(
@@ -1569,15 +1569,13 @@ bool tools::SDLSearch(const llvm::opt::ArgList &DriverArgs,
   }
 
   bool FoundSDL = false;
-  for (StringRef LibraryPath : LibraryPaths) {
-    for (StringRef SDL_FileName : SDL_FileNames) {
-      SmallString<128> Full_SDL_FileName(LibraryPath);
-      llvm::sys::path::append(Full_SDL_FileName, SDL_FileName);
-      // printf(" --> checking for filename %s\n",Full_SDL_FileName.c_str());
-      if (llvm::sys::fs::exists(Full_SDL_FileName)) {
+  for (std::string LibraryPath : LibraryPaths) {
+    for (std::string SDL_FileName : SDL_FileNames) {
+      std::string FullName = std::string(LibraryPath + SDL_FileName);
+      if (llvm::sys::fs::exists(FullName)) {
         if (postClangLink)
           CC1Args.push_back("-mlink-builtin-bitcode");
-        CC1Args.push_back(DriverArgs.MakeArgString(Full_SDL_FileName));
+        CC1Args.push_back(DriverArgs.MakeArgString(FullName));
         FoundSDL = true;
         break;
       }
@@ -1590,11 +1588,12 @@ bool tools::SDLSearch(const llvm::opt::ArgList &DriverArgs,
 
 void tools::AddStaticDeviceLibs(const llvm::opt::ArgList &DriverArgs,
                                 llvm::opt::ArgStringList &CC1Args,
-                                StringRef GpuArch, const Driver &D,
-                                bool isBitCodeSDL, bool postClangLink) {
+                                StringRef ArchName, StringRef GpuArch,
+                                const Driver &D, bool isBitCodeSDL,
+                                bool postClangLink) {
 
-  SmallVector<StringRef, 8> LibraryPaths;
-  // First Add user-defined library paths from LIBRARY_PATH.
+  SmallVector<std::string, 8> LibraryPaths;
+  // Add search directories from LIBRARY_PATH env variable
   llvm::Optional<std::string> LibPath =
       llvm::sys::Process::GetEnv("LIBRARY_PATH");
   if (LibPath) {
@@ -1605,34 +1604,34 @@ void tools::AddStaticDeviceLibs(const llvm::opt::ArgList &DriverArgs,
       LibraryPaths.emplace_back(Path.trim());
   }
 
-  // Fixme need to add directories from user-specified -L options
+  // Add directories from user-specified -L options
+  for (std::string Search_Dir : DriverArgs.getAllArgValues(options::OPT_L))
+    LibraryPaths.emplace_back(Search_Dir);
 
-  // Add path to lib and/or lib64 or lib-debug folders
+  // Add path to lib-debug folders
   SmallString<256> DefaultLibPath =
     llvm::sys::path::parent_path(D.Dir);
   llvm::sys::path::append(DefaultLibPath,
       Twine("lib") + CLANG_LIBDIR_SUFFIX);
   LibraryPaths.emplace_back(DefaultLibPath.c_str());
 
-  // Build list of Static Device Libraries SDLs
+  // Build list of Static Device Libraries SDLs specified by -l option
   SmallVector<std::string, 16> SDL_Names;
   for (std::string SDL_Name : DriverArgs.getAllArgValues(options::OPT_l)) {
-    // No SDL for omp or cudart, they only have host libs
+    // No SDL for -lomp or -lcudart, they only have host libs
     if (SDL_Name != "omp" && SDL_Name != "cudart") {
       bool inSDL_Names = false;
       for (std::string OldName : SDL_Names) {
         if (OldName == SDL_Name)
           inSDL_Names = true;
       }
-      if (!inSDL_Names) // Avoid duplicates in list of  SDL_Names to search for
+      if (!inSDL_Names) // Avoid duplicates in list of SDL_Names
         SDL_Names.emplace_back(SDL_Name);
     }
   }
-  // printf("\n Searching for SDLs\n");
+
   for (std::string SDL_Name : SDL_Names) {
-    // printf("Calling SDLSearch for SDL %s\n",SDL_Name.c_str());
-    // boold FoundSDL =
-    SDLSearch(DriverArgs, CC1Args, LibraryPaths, SDL_Name, GpuArch.str(),
+    SDLSearch(DriverArgs, CC1Args, LibraryPaths, SDL_Name, ArchName, GpuArch,
               isBitCodeSDL, postClangLink);
   }
 

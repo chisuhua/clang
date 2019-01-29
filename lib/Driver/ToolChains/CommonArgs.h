@@ -49,14 +49,15 @@ void AddRunTimeLibs(const ToolChain &TC, const Driver &D,
                     const llvm::opt::ArgList &Args);
 
 void AddStaticDeviceLibs(const llvm::opt::ArgList &DriverArgs,
-                         llvm::opt::ArgStringList &CmdArgs, StringRef GpuArch,
-                         const Driver &D, bool isBitCodeSDL,
+                         llvm::opt::ArgStringList &CmdArgs, StringRef ArchName,
+                         StringRef GpuArch, const Driver &D, bool isBitCodeSDL,
                          bool postClangLink);
 
 bool SDLSearch(const llvm::opt::ArgList &DriverArgs,
                llvm::opt::ArgStringList &CmdArgs,
-               SmallVector<StringRef, 8> LibraryPaths, std::string libname,
-               std::string devtype, bool isBitCodeSDL, bool postClangLink);
+               SmallVector<std::string, 8> LibraryPaths, std::string libname,
+               StringRef ArchName, StringRef GpuArch, bool isBitCodeSDL,
+               bool postClangLink);
 
 void AddOpenMPLinkerScript(const ToolChain &TC, Compilation &C,
                            const InputInfo &Output,
