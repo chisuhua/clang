@@ -84,7 +84,7 @@ const char *AMDGCN::Linker::constructOmpExtraCmds(Compilation &C,
     addBCLib(C, Args, CmdArgs, LibraryPaths, Lib);
 
   // This will find .a and .bc files that match naming convention.
-  AddStaticDeviceLibs(Args, CmdArgs, SubArchName, C.getDriver(),
+  AddStaticDeviceLibs(Args, CmdArgs, "amdgcn", SubArchName, C.getDriver(),
                       /* bitcode SDL?*/ true,
                       /* PostClang Link? */ false);
 

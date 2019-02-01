@@ -653,7 +653,7 @@ void CudaToolChain::addClangTargetOptions(
   // Add user-specified (-l)  static device libs.
   // These are bitcode SDLs that get linked with -mlink-builtin-bitcode option
   if (DeviceOffloadingKind == Action::OFK_OpenMP)
-    AddStaticDeviceLibs(DriverArgs, CC1Args, GpuArch, getDriver(),
+    AddStaticDeviceLibs(DriverArgs, CC1Args, "nvptx", GpuArch, getDriver(),
                         /* bitcode SDL?*/ true,
                         /* PostClang Link? */ true);
 }
