@@ -1,9 +1,8 @@
 //===-- CodeGenFunction.h - Per-Function state for LLVM CodeGen -*- C++ -*-===//
 //
-//                     The LLVM Compiler Infrastructure
-//
-// This file is distributed under the University of Illinois Open Source
-// License. See LICENSE.TXT for details.
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
 //
@@ -29,9 +28,9 @@
 #include "clang/AST/Type.h"
 #include "clang/Basic/ABI.h"
 #include "clang/Basic/CapturedStmt.h"
+#include "clang/Basic/CodeGenOptions.h"
 #include "clang/Basic/OpenMPKinds.h"
 #include "clang/Basic/TargetInfo.h"
-#include "clang/Frontend/CodeGenOptions.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/MapVector.h"
@@ -131,6 +130,7 @@ enum TypeEvaluationKind {
   SANITIZER_CHECK(ShiftOutOfBounds, shift_out_of_bounds, 0)                    \
   SANITIZER_CHECK(SubOverflow, sub_overflow, 0)                                \
   SANITIZER_CHECK(TypeMismatch, type_mismatch, 1)                              \
+  SANITIZER_CHECK(AlignmentAssumption, alignment_assumption, 0)                \
   SANITIZER_CHECK(VLABoundNotPositive, vla_bound_not_positive, 0)
 
 enum SanitizerHandler {
@@ -1197,6 +1197,8 @@ public:
 
 private:
   CGDebugInfo *DebugInfo;
+  /// Used to create unique names for artificial VLA size debug info variables.
+  unsigned VLAExprCounter = 0;
   bool DisableDebugInfo = false;
 
   /// DidCallStackSave - Whether llvm.stacksave has been called. Used to avoid
@@ -1825,7 +1827,7 @@ public:
   void EmitConstructorBody(FunctionArgList &Args);
   void EmitDestructorBody(FunctionArgList &Args);
   void emitImplicitAssignmentOperatorBody(FunctionArgList &Args);
-  void EmitFunctionBody(FunctionArgList &Args, const Stmt *Body);
+  void EmitFunctionBody(const Stmt *Body);
   void EmitBlockWithFallThrough(llvm::BasicBlock *BB, const Stmt *S);
 
   void EmitForwardingCallToLambda(const CXXMethodDecl *LambdaCallOperator,
@@ -1833,6 +1835,9 @@ public:
   void EmitLambdaBlockInvokeBody();
   void EmitLambdaDelegatingInvokeBody(const CXXMethodDecl *MD);
   void EmitLambdaStaticInvokeBody(const CXXMethodDecl *MD);
+  void EmitLambdaVLACapture(const VariableArrayType *VAT, LValue LV) {
+    EmitStoreThroughLValue(RValue::get(VLASizeMap[VAT->getSizeExpr()]), LV);
+  }
   void EmitAsanPrologueOrEpilogue(bool Prologue);
 
   /// Emit the unified return block, trying to avoid its emission when
@@ -1854,7 +1859,7 @@ public:
   void FinishThunk();
 
   /// Emit a musttail call for a thunk with a potentially adjusted this pointer.
-  void EmitMustTailThunk(const CXXMethodDecl *MD, llvm::Value *AdjustedThisPtr,
+  void EmitMustTailThunk(GlobalDecl GD, llvm::Value *AdjustedThisPtr,
                          llvm::Value *Callee);
 
   /// Generate a thunk for the given method.
@@ -2615,10 +2620,12 @@ public:
   bool sanitizePerformTypeCheck() const;
 
   /// Emit a check that \p V is the address of storage of the
-  /// appropriate size and alignment for an object of type \p Type.
+  /// appropriate size and alignment for an object of type \p Type
+  /// (or if ArraySize is provided, for an array of that bound).
   void EmitTypeCheck(TypeCheckKind TCK, SourceLocation Loc, llvm::Value *V,
                      QualType Type, CharUnits Alignment = CharUnits::Zero(),
-                     SanitizerSet SkippedChecks = SanitizerSet());
+                     SanitizerSet SkippedChecks = SanitizerSet(),
+                     llvm::Value *ArraySize = nullptr);
 
   /// Emit a check that \p Base points into an array object, which
   /// we can access at index \p Index. \p Accessed should be \c false if we
@@ -2630,12 +2637,6 @@ public:
                                        bool isInc, bool isPre);
   ComplexPairTy EmitComplexPrePostIncDec(const UnaryOperator *E, LValue LV,
                                          bool isInc, bool isPre);
-
-  void EmitAlignmentAssumption(llvm::Value *PtrValue, unsigned Alignment,
-                               llvm::Value *OffsetValue = nullptr) {
-    Builder.CreateAlignmentAssumption(CGM.getDataLayout(), PtrValue, Alignment,
-                                      OffsetValue);
-  }
 
   /// Converts Location to a DebugLoc, if debug information is enabled.
   llvm::DebugLoc SourceLocToDebugLoc(SourceLocation Location);
@@ -2800,11 +2801,27 @@ public:
   PeepholeProtection protectFromPeepholes(RValue rvalue);
   void unprotectFromPeepholes(PeepholeProtection protection);
 
-  void EmitAlignmentAssumption(llvm::Value *PtrValue, llvm::Value *Alignment,
-                               llvm::Value *OffsetValue = nullptr) {
-    Builder.CreateAlignmentAssumption(CGM.getDataLayout(), PtrValue, Alignment,
-                                      OffsetValue);
-  }
+  void EmitAlignmentAssumptionCheck(llvm::Value *Ptr, QualType Ty,
+                                    SourceLocation Loc,
+                                    SourceLocation AssumptionLoc,
+                                    llvm::Value *Alignment,
+                                    llvm::Value *OffsetValue,
+                                    llvm::Value *TheCheck,
+                                    llvm::Instruction *Assumption);
+
+  void EmitAlignmentAssumption(llvm::Value *PtrValue, QualType Ty,
+                               SourceLocation Loc, SourceLocation AssumptionLoc,
+                               llvm::Value *Alignment,
+                               llvm::Value *OffsetValue = nullptr);
+
+  void EmitAlignmentAssumption(llvm::Value *PtrValue, QualType Ty,
+                               SourceLocation Loc, SourceLocation AssumptionLoc,
+                               unsigned Alignment,
+                               llvm::Value *OffsetValue = nullptr);
+
+  void EmitAlignmentAssumption(llvm::Value *PtrValue, const Expr *E,
+                               SourceLocation AssumptionLoc, unsigned Alignment,
+                               llvm::Value *OffsetValue = nullptr);
 
   //===--------------------------------------------------------------------===//
   //                             Statement Emission
@@ -3547,7 +3564,6 @@ public:
 
   LValue EmitCXXConstructLValue(const CXXConstructExpr *E);
   LValue EmitCXXBindTemporaryLValue(const CXXBindTemporaryExpr *E);
-  LValue EmitLambdaLValue(const LambdaExpr *E);
   LValue EmitCXXTypeidLValue(const CXXTypeidExpr *E);
   LValue EmitCXXUuidofLValue(const CXXUuidofExpr *E);
 
@@ -3682,9 +3698,14 @@ public:
   RValue EmitAMDGPUDevicePrintfCallExpr(const CallExpr *E,
                                         ReturnValueSlot ReturnValue);
 
-  RValue EmitBuiltinExpr(const FunctionDecl *FD,
-                         unsigned BuiltinID, const CallExpr *E,
-                         ReturnValueSlot ReturnValue);
+  // it look git merge can't replace below , I should remote it, but now I comment out
+  // TODO schi
+  // RValue EmitBuiltinExpr(const FunctionDecl *FD,
+  //                        unsigned BuiltinID, const CallExpr *E,
+  //                        ReturnValueSlot ReturnValue);
+
+  RValue EmitBuiltinExpr(const GlobalDecl GD, unsigned BuiltinID,
+                         const CallExpr *E, ReturnValueSlot ReturnValue);
 
   RValue emitRotate(const CallExpr *E, bool IsRotateRight);
 
@@ -3800,6 +3821,11 @@ public:
   llvm::Value *EmitARCRetainAutoreleasedReturnValue(llvm::Value *value);
   llvm::Value *EmitARCUnsafeClaimAutoreleasedReturnValue(llvm::Value *value);
 
+  llvm::Value *EmitObjCAutorelease(llvm::Value *value, llvm::Type *returnType);
+  llvm::Value *EmitObjCRetainNonBlock(llvm::Value *value,
+                                      llvm::Type *returnType);
+  void EmitObjCRelease(llvm::Value *value, ARCPreciseLifetime_t precise);
+
   std::pair<LValue,llvm::Value*>
   EmitARCStoreAutoreleasing(const BinaryOperator *e);
   std::pair<LValue,llvm::Value*>
@@ -3807,6 +3833,10 @@ public:
   std::pair<LValue,llvm::Value*>
   EmitARCStoreUnsafeUnretained(const BinaryOperator *e, bool ignored);
 
+  llvm::Value *EmitObjCAlloc(llvm::Value *value,
+                             llvm::Type *returnType);
+  llvm::Value *EmitObjCAllocWithZone(llvm::Value *value,
+                                     llvm::Type *returnType);
   llvm::Value *EmitObjCThrowOperand(const Expr *expr);
   llvm::Value *EmitObjCConsumeObject(QualType T, llvm::Value *Ptr);
   llvm::Value *EmitObjCExtendObjectLifetime(QualType T, llvm::Value *Ptr);
@@ -3963,8 +3993,6 @@ public:
   void enterNonTrivialFullExpression(const FullExpr *E);
 
   void EmitCXXThrowExpr(const CXXThrowExpr *E, bool KeepInsertionPoint = true);
-
-  void EmitLambdaExpr(const LambdaExpr *E, AggValueSlot Dest);
 
   RValue EmitAtomicExpr(AtomicExpr *E);
 

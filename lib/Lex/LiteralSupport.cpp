@@ -1,9 +1,8 @@
 //===--- LiteralSupport.cpp - Code to parse and process literals ----------===//
 //
-//                     The LLVM Compiler Infrastructure
-//
-// This file is distributed under the University of Illinois Open Source
-// License. See LICENSE.TXT for details.
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
 //
@@ -617,10 +616,11 @@ NumericLiteralParser::NumericLiteralParser(StringRef TokSpelling,
       if (isHalf || isFloat || isLong || isFloat128)
         break; // HF, FF, LF, QF invalid.
 
-      if (s + 2 < ThisTokEnd && s[1] == '1' && s[2] == '6') {
-          s += 2; // success, eat up 2 characters.
-          isFloat16 = true;
-          continue;
+      if (PP.getTargetInfo().hasFloat16Type() && s + 2 < ThisTokEnd &&
+          s[1] == '1' && s[2] == '6') {
+        s += 2; // success, eat up 2 characters.
+        isFloat16 = true;
+        continue;
       }
 
       isFloat = true;

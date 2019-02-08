@@ -1,9 +1,8 @@
 //===- ASTBitCodes.h - Enum values for the PCH bitcode format ---*- C++ -*-===//
 //
-//                     The LLVM Compiler Infrastructure
-//
-// This file is distributed under the University of Illinois Open Source
-// License. See LICENSE.TXT for details.
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
 //
@@ -1015,6 +1014,10 @@ namespace serialization {
 #define IMAGE_TYPE(ImgType, Id, SingletonId, Access, Suffix) \
       PREDEF_TYPE_##Id##_ID,
 #include "clang/Basic/OpenCLImageTypes.def"
+      /// \brief OpenCL extension types with auto numeration
+#define EXT_OPAQUE_TYPE(ExtType, Id, Ext) \
+      PREDEF_TYPE_##Id##_ID,
+#include "clang/Basic/OpenCLExtensionTypes.def"
     };
 
     /// The number of predefined type IDs that are reserved for

@@ -1,9 +1,8 @@
 //= ScanfFormatString.cpp - Analysis of printf format strings --*- C++ -*-===//
 //
-//                     The LLVM Compiler Infrastructure
-//
-// This file is distributed under the University of Illinois Open Source
-// License. See LICENSE.TXT for details.
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
 //
@@ -264,6 +263,7 @@ ArgType ScanfSpecifier::getArgType(ASTContext &Ctx) const {
         case LengthModifier::AsWide:
           return ArgType::Invalid();
       }
+      llvm_unreachable("Unsupported LenghtModifier Type");
 
     // Unsigned int.
     case ConversionSpecifier::oArg:
@@ -303,6 +303,7 @@ ArgType ScanfSpecifier::getArgType(ASTContext &Ctx) const {
         case LengthModifier::AsWide:
           return ArgType::Invalid();
       }
+      llvm_unreachable("Unsupported LenghtModifier Type");
 
     // Float.
     case ConversionSpecifier::aArg:

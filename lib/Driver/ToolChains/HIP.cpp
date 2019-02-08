@@ -1,9 +1,8 @@
 //===--- HIP.cpp - HIP Tool and ToolChain Implementations -------*- C++ -*-===//
 //
-//                     The LLVM Compiler Infrastructure
-//
-// This file is distributed under the University of Illinois Open Source
-// License. See LICENSE.TXT for details.
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
 
@@ -23,6 +22,12 @@ using namespace clang::driver::toolchains;
 using namespace clang::driver::tools;
 using namespace clang;
 using namespace llvm::opt;
+
+#if _WIN32 || _WIN64
+#define NULL_FILE "nul"
+#else
+#define NULL_FILE "/dev/null"
+#endif
 
 namespace {
 
@@ -204,7 +209,7 @@ void AMDGCN::constructHIPFatbinCommand(Compilation &C, const JobAction &JA,
   // ToDo: Remove the dummy host binary entry which is required by
   // clang-offload-bundler.
   std::string BundlerTargetArg = "-targets=host-x86_64-unknown-linux";
-  std::string BundlerInputArg = "-inputs=/dev/null";
+  std::string BundlerInputArg = "-inputs=" NULL_FILE;
 
   for (const auto &II : Inputs) {
     const auto* A = II.getAction();

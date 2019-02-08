@@ -1,9 +1,8 @@
 //===--- OpenMPKinds.cpp - Token Kinds Support ----------------------------===//
 //
-//                     The LLVM Compiler Infrastructure
-//
-// This file is distributed under the University of Illinois Open Source
-// License. See LICENSE.TXT for details.
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
 /// \file
@@ -108,8 +107,11 @@ unsigned clang::getOpenMPSimpleClauseType(OpenMPClauseKind Kind,
 #include "clang/Basic/OpenMPKinds.def"
         .Default(OMPC_LINEAR_unknown);
   case OMPC_map:
-    return llvm::StringSwitch<OpenMPMapClauseKind>(Str)
-#define OPENMP_MAP_KIND(Name) .Case(#Name, OMPC_MAP_##Name)
+    return llvm::StringSwitch<unsigned>(Str)
+#define OPENMP_MAP_KIND(Name)                                                  \
+  .Case(#Name, static_cast<unsigned>(OMPC_MAP_##Name))
+#define OPENMP_MAP_MODIFIER_KIND(Name)                                         \
+  .Case(#Name, static_cast<unsigned>(OMPC_MAP_MODIFIER_##Name))
 #include "clang/Basic/OpenMPKinds.def"
         .Default(OMPC_MAP_unknown);
   case OMPC_dist_schedule:
@@ -243,9 +245,13 @@ const char *clang::getOpenMPSimpleClauseTypeName(OpenMPClauseKind Kind,
   case OMPC_map:
     switch (Type) {
     case OMPC_MAP_unknown:
+    case OMPC_MAP_MODIFIER_last:
       return "unknown";
 #define OPENMP_MAP_KIND(Name)                                                \
   case OMPC_MAP_##Name:                                                      \
+    return #Name;
+#define OPENMP_MAP_MODIFIER_KIND(Name)                                       \
+  case OMPC_MAP_MODIFIER_##Name:                                             \
     return #Name;
 #include "clang/Basic/OpenMPKinds.def"
     default:

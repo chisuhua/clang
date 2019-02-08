@@ -534,7 +534,7 @@ token.  This concept maps directly to the "spelling location" for the token.
 ``SourceRange`` and ``CharSourceRange``
 ---------------------------------------
 
-.. mostly taken from http://lists.llvm.org/pipermail/cfe-dev/2010-August/010595.html
+.. mostly taken from https://lists.llvm.org/pipermail/cfe-dev/2010-August/010595.html
 
 Clang represents most source ranges by [first, last], where "first" and "last"
 each point to the beginning of their respective tokens.  For example consider
@@ -559,13 +559,9 @@ The clang Driver and library are documented :doc:`here <DriverInternals>`.
 Precompiled Headers
 ===================
 
-Clang supports two implementations of precompiled headers.  The default
-implementation, precompiled headers (:doc:`PCH <PCHInternals>`) uses a
+Clang supports precompiled headers (:doc:`PCH <PCHInternals>`), which  uses a
 serialized representation of Clang's internal data structures, encoded with the
 `LLVM bitstream format <https://llvm.org/docs/BitCodeFormat.html>`_.
-Pretokenized headers (:doc:`PTH <PTHInternals>`), on the other hand, contain a
-serialized representation of the tokens encountered when preprocessing a header
-(and anything that header includes).
 
 The Frontend Library
 ====================
@@ -1368,7 +1364,7 @@ constructed for function bodies (usually an instance of ``CompoundStmt``), but
 can also be instantiated to represent the control-flow of any class that
 subclasses ``Stmt``, which includes simple expressions.  Control-flow graphs
 are especially useful for performing `flow- or path-sensitive
-<http://en.wikipedia.org/wiki/Data_flow_analysis#Sensitivities>`_ program
+<https://en.wikipedia.org/wiki/Data_flow_analysis#Sensitivities>`_ program
 analyses on a given function.
 
 Basic Blocks

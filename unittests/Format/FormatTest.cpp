@@ -1,9 +1,8 @@
 //===- unittest/Format/FormatTest.cpp - Formatting unit tests -------------===//
 //
-//                     The LLVM Compiler Infrastructure
-//
-// This file is distributed under the University of Illinois Open Source
-// License. See LICENSE.TXT for details.
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
 
@@ -6472,6 +6471,8 @@ TEST_F(FormatTest, UnderstandsSquareAttributes) {
   // Make sure we do not mistake attributes for array subscripts.
   verifyFormat("int a() {}\n"
                "[[unused]] int b() {}\n");
+  verifyFormat("NSArray *arr;\n"
+               "arr[[Foo() bar]];");
 
   // On the other hand, we still need to correctly find array subscripts.
   verifyFormat("int a = std::vector<int>{1, 2, 3}[0];");
@@ -12751,6 +12752,45 @@ TEST_F(FormatTest, GuessLanguageWithCaret) {
   EXPECT_EQ(
       FormatStyle::LK_ObjC,
       guessLanguage("foo.h", "int(^foo[(kNumEntries + 10)])(char, float);"));
+}
+
+TEST_F(FormatTest, GuessedLanguageWithInlineAsmClobbers) {
+  EXPECT_EQ(FormatStyle::LK_Cpp, guessLanguage("foo.h",
+                                               "void f() {\n"
+                                               "  asm (\"mov %[e], %[d]\"\n"
+                                               "     : [d] \"=rm\" (d)\n"
+                                               "       [e] \"rm\" (*e));\n"
+                                               "}"));
+  EXPECT_EQ(FormatStyle::LK_Cpp, guessLanguage("foo.h",
+                                               "void f() {\n"
+                                               "  _asm (\"mov %[e], %[d]\"\n"
+                                               "     : [d] \"=rm\" (d)\n"
+                                               "       [e] \"rm\" (*e));\n"
+                                               "}"));
+  EXPECT_EQ(FormatStyle::LK_Cpp, guessLanguage("foo.h",
+                                               "void f() {\n"
+                                               "  __asm (\"mov %[e], %[d]\"\n"
+                                               "     : [d] \"=rm\" (d)\n"
+                                               "       [e] \"rm\" (*e));\n"
+                                               "}"));
+  EXPECT_EQ(FormatStyle::LK_Cpp, guessLanguage("foo.h",
+                                               "void f() {\n"
+                                               "  __asm__ (\"mov %[e], %[d]\"\n"
+                                               "     : [d] \"=rm\" (d)\n"
+                                               "       [e] \"rm\" (*e));\n"
+                                               "}"));
+  EXPECT_EQ(FormatStyle::LK_Cpp, guessLanguage("foo.h",
+                                               "void f() {\n"
+                                               "  asm (\"mov %[e], %[d]\"\n"
+                                               "     : [d] \"=rm\" (d),\n"
+                                               "       [e] \"rm\" (*e));\n"
+                                               "}"));
+  EXPECT_EQ(FormatStyle::LK_Cpp,
+            guessLanguage("foo.h", "void f() {\n"
+                                   "  asm volatile (\"mov %[e], %[d]\"\n"
+                                   "     : [d] \"=rm\" (d)\n"
+                                   "       [e] \"rm\" (*e));\n"
+                                   "}"));
 }
 
 TEST_F(FormatTest, GuessLanguageWithChildLines) {

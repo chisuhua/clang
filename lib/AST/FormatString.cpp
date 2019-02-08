@@ -1,9 +1,8 @@
 // FormatString.cpp - Common stuff for handling printf/scanf formats -*- C++ -*-
 //
-//                     The LLVM Compiler Infrastructure
-//
-// This file is distributed under the University of Illinois Open Source
-// License. See LICENSE.TXT for details.
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
 //===----------------------------------------------------------------------===//
 //
@@ -173,6 +172,36 @@ clang::analyze_format_string::ParseArgPosition(FormatStringHandler &H,
     // these characters.
     Beg = I;
     return false;
+  }
+
+  return false;
+}
+
+bool
+clang::analyze_format_string::ParseVectorModifier(FormatStringHandler &H,
+                                                  FormatSpecifier &FS,
+                                                  const char *&I,
+                                                  const char *E,
+                                                  const LangOptions &LO) {
+  if (!LO.OpenCL)
+    return false;
+
+  const char *Start = I;
+  if (*I == 'v') {
+    ++I;
+
+    if (I == E) {
+      H.HandleIncompleteSpecifier(Start, E - Start);
+      return true;
+    }
+
+    OptionalAmount NumElts = ParseAmount(I, E);
+    if (NumElts.getHowSpecified() != OptionalAmount::Constant) {
+      H.HandleIncompleteSpecifier(Start, E - Start);
+      return true;
+    }
+
+    FS.setVectorNumElts(NumElts);
   }
 
   return false;
@@ -455,6 +484,14 @@ ArgType::matchesType(ASTContext &C, QualType argTy) const {
   }
 
   llvm_unreachable("Invalid ArgType Kind!");
+}
+
+ArgType ArgType::makeVectorType(ASTContext &C, unsigned NumElts) const {
+  if (K != SpecificTy) // Won't be a valid vector element type.
+    return ArgType::Invalid();
+
+  QualType Vec = C.getExtVectorType(T, NumElts);
+  return ArgType(Vec, Name);
 }
 
 QualType ArgType::getRepresentativeType(ASTContext &C) const {
