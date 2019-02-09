@@ -121,7 +121,6 @@ CodeGenFunction::EmitNVPTXDevicePrintfCallExpr(const CallExpr *E,
       VprintfFunc, {Args[0].getRValue(*this).getScalarVal(), BufferPtr}));
 }
 
-  // TODO schi
 // For amdgcn, we build a struct of numerics where string pointers
 // are converted to their lengths and then all the strings are
 // written after the struct. We write the length of the numerics struct

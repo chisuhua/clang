@@ -223,6 +223,7 @@ static Value *MakeAtomicCmpXchgValue(CodeGenFunction &CGF, const CallExpr *E,
   Value *Pair = CGF.Builder.CreateAtomicCmpXchg(
       Args[0], Args[1], Args[2], llvm::AtomicOrdering::SequentiallyConsistent,
       llvm::AtomicOrdering::SequentiallyConsistent);
+
   if (ReturnBool)
     // Extract boolean success flag and zext it to int.
     return CGF.Builder.CreateZExt(CGF.Builder.CreateExtractValue(Pair, 1),
@@ -3826,6 +3827,13 @@ RValue CodeGenFunction::EmitBuiltinExpr(const GlobalDecl GD, unsigned BuiltinID,
   case Builtin::BI__builtin_os_log_format:
     return emitBuiltinOSLogFormat(*E);
 
+  case Builtin::BI__builtin_os_log_format_buffer_size: {
+    analyze_os_log::OSLogBufferLayout Layout;
+    analyze_os_log::computeOSLogBufferLayout(CGM.getContext(), E, Layout);
+    return RValue::get(ConstantInt::get(ConvertType(E->getType()),
+                                        Layout.size().getQuantity()));
+  }
+
   case Builtin::BI__xray_customevent: {
     if (!ShouldXRayInstrumentFunction())
       return RValue::getIgnored();
@@ -3958,6 +3966,7 @@ RValue CodeGenFunction::EmitBuiltinExpr(const GlobalDecl GD, unsigned BuiltinID,
     if ((getTarget().getTriple().getArch() == llvm::Triple::amdgcn) &&
         (IntrinsicID == Intrinsic::not_intrinsic))
       IntrinsicID = Intrinsic::getIntrinsicForGCCBuiltin("nvvm", Name);
+
     // NOTE we don't need to perform a compatibility flag check here since the
     // intrinsics are declared in Builtins*.def via LANGBUILTIN which filter the
     // MS builtins via ALL_MS_LANGUAGES and are filtered earlier.
@@ -4015,12 +4024,12 @@ RValue CodeGenFunction::EmitBuiltinExpr(const GlobalDecl GD, unsigned BuiltinID,
       Args.push_back(ArgValue);
     }
 
-    // TODO schi Value *V = Builder.CreateCall(F, Args);
     QualType BuiltinRetType = E->getType();
 
     llvm::Type *RetTy = VoidTy;
     if (!BuiltinRetType->isVoidType())
       RetTy = ConvertType(BuiltinRetType);
+
     if (getTarget().getTriple().getArch() == llvm::Triple::amdgcn) {
       // Change nvidia intrinsics into function calls to be converted
       // by libcuda2gcn.bc
@@ -12404,7 +12413,8 @@ Value *CodeGenFunction::EmitPPCBuiltinExpr(unsigned BuiltinID,
 
 Value *CodeGenFunction::EmitAMDGPUBuiltinExpr(unsigned BuiltinID,
                                               const CallExpr *E) {
-  // TODO schi These helper functions may need work
+
+  // These helper functions may need work
   auto AmdgcnMakeLdg = [&](unsigned IntrinsicID) {
     Value *Ptr = EmitScalarExpr(E->getArg(0));
     clang::CharUnits Align =
@@ -12578,7 +12588,6 @@ Value *CodeGenFunction::EmitAMDGPUBuiltinExpr(unsigned BuiltinID,
   case AMDGPU::BI__builtin_r600_read_tidig_z:
     return emitRangedBuiltin(*this, Intrinsic::r600_read_tidig_z, 0, 1024);
 
-    // TODO schi
     // OpenCuda builtins start here.
     // FIXME  There is lots of work to do here to map all open_cuda atomic
     // builtins
@@ -12844,11 +12853,9 @@ Value *CodeGenFunction::EmitAMDGPUBuiltinExpr(unsigned BuiltinID,
     Builder.CreateStore(Pred, PredOutPtr);
     return Builder.CreateExtractValue(ResultPair, 0);
   }
-
-
   default:
     return nullptr;
-  }
+  } // end of big switch
 }
 
 /// Handle a SystemZ function in which the final argument is a pointer

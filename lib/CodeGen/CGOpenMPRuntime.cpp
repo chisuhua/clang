@@ -2959,11 +2959,13 @@ CGOpenMPRuntime::getOrCreateInternalVariable(llvm::Type *Ty,
            "OMP internal variable has different type than requested");
     return &*Elem.second;
   }
-
+  llvm::GlobalValue::LinkageTypes Linkage =
+      (CGM.getTriple().getArch() == llvm::Triple::amdgcn)
+          ? llvm::GlobalValue::PrivateLinkage
+          : llvm::GlobalValue::CommonLinkage;
   return Elem.second = new llvm::GlobalVariable(
-             CGM.getModule(), Ty, /*IsConstant*/ false,
-             llvm::GlobalValue::CommonLinkage, llvm::Constant::getNullValue(Ty),
-             Elem.first());
+             CGM.getModule(), Ty, /*IsConstant*/ false, Linkage,
+             llvm::Constant::getNullValue(Ty), Elem.first());
 }
 
 llvm::Value *CGOpenMPRuntime::getCriticalRegionLock(StringRef CriticalName) {
@@ -8731,6 +8733,10 @@ bool CGOpenMPRuntime::emitTargetGlobalVariable(GlobalDecl GD) {
 
 void CGOpenMPRuntime::registerTargetGlobalVariable(const VarDecl *VD,
                                                    llvm::Constant *Addr) {
+  // Exclude local constants that have no external storage
+  if (!VD->hasExternalStorage())
+    return;
+
   llvm::Optional<OMPDeclareTargetDeclAttr::MapTypeTy> Res =
       OMPDeclareTargetDeclAttr::isDeclareTargetDeclaration(VD);
   if (!Res) {

@@ -48,6 +48,17 @@ void AddRunTimeLibs(const ToolChain &TC, const Driver &D,
                     llvm::opt::ArgStringList &CmdArgs,
                     const llvm::opt::ArgList &Args);
 
+void AddStaticDeviceLibs(const llvm::opt::ArgList &DriverArgs,
+                         llvm::opt::ArgStringList &CmdArgs, StringRef ArchName,
+                         StringRef GpuArch, const Driver &D, bool isBitCodeSDL,
+                         bool postClangLink);
+
+bool SDLSearch(const llvm::opt::ArgList &DriverArgs,
+               llvm::opt::ArgStringList &CmdArgs,
+               SmallVector<std::string, 8> LibraryPaths, std::string libname,
+               StringRef ArchName, StringRef GpuArch, bool isBitCodeSDL,
+               bool postClangLink);
+
 void AddOpenMPLinkerScript(const ToolChain &TC, Compilation &C,
                            const InputInfo &Output,
                            const InputInfoList &Inputs,
@@ -81,6 +92,8 @@ unsigned ParseFunctionAlignment(const ToolChain &TC,
 void AddAssemblerKPIC(const ToolChain &ToolChain,
                       const llvm::opt::ArgList &Args,
                       llvm::opt::ArgStringList &CmdArgs);
+
+std::string FindDebugInLibraryPath();
 
 void addArchSpecificRPath(const ToolChain &TC, const llvm::opt::ArgList &Args,
                           llvm::opt::ArgStringList &CmdArgs);

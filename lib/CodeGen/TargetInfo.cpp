@@ -7782,15 +7782,38 @@ public:
 };
 }
 
+namespace {
+inline llvm::APSInt getConstexprInt(const Expr *E, const ASTContext &Ctx) {
+  clang::Expr::EvalResult r;
+  APValue Val(llvm::APSInt(32));
+  r.Val = Val;
+  if (E)
+    E->EvaluateAsInt(r, Ctx);
+
+  return r.Val.getInt();
+}
+} // namespace
+
 void AMDGPUTargetCodeGenInfo::setTargetAttributes(
     const Decl *D, llvm::GlobalValue *GV, CodeGen::CodeGenModule &M) const {
-  if (GV->isDeclaration())
-    return;
   const FunctionDecl *FD = dyn_cast_or_null<FunctionDecl>(D);
   if (!FD)
     return;
 
   llvm::Function *F = cast<llvm::Function>(GV);
+
+  if (M.getLangOpts().OpenMP) {
+    F->removeFnAttr(llvm::Attribute::OptimizeNone);
+    F->removeFnAttr(llvm::Attribute::NoInline);
+    F->addFnAttr(llvm::Attribute::AlwaysInline);
+    F->addFnAttr(llvm::Attribute::NoUnwind);
+    F->addFnAttr(llvm::Attribute::NoRecurse);
+    if (!GV->isDeclaration())
+      F->setLinkage(llvm::GlobalVariable::ExternalLinkage);
+  }
+  if (GV->isDeclaration())
+    return;
+  // The reset of setTargetAttributes is for Function definitions
 
   const auto *ReqdWGS = M.getLangOpts().OpenCL ?
     FD->getAttr<ReqdWorkGroupSizeAttr>() : nullptr;
@@ -7801,8 +7824,13 @@ void AMDGPUTargetCodeGenInfo::setTargetAttributes(
 
   const auto *FlatWGS = FD->getAttr<AMDGPUFlatWorkGroupSizeAttr>();
   if (ReqdWGS || FlatWGS) {
-    unsigned Min = FlatWGS ? FlatWGS->getMin() : 0;
-    unsigned Max = FlatWGS ? FlatWGS->getMax() : 0;
+    llvm::APSInt min = getConstexprInt(FlatWGS ? FlatWGS->getMin() : nullptr,
+                                       FD->getASTContext());
+    llvm::APSInt max = getConstexprInt(FlatWGS ? FlatWGS->getMax() : nullptr,
+                                       FD->getASTContext());
+
+    unsigned Min = min.getZExtValue();
+    unsigned Max = max.getZExtValue();
     if (ReqdWGS && Min == 0 && Max == 0)
       Min = Max = ReqdWGS->getXDim() * ReqdWGS->getYDim() * ReqdWGS->getZDim();
 
@@ -7816,8 +7844,11 @@ void AMDGPUTargetCodeGenInfo::setTargetAttributes(
   }
 
   if (const auto *Attr = FD->getAttr<AMDGPUWavesPerEUAttr>()) {
-    unsigned Min = Attr->getMin();
-    unsigned Max = Attr->getMax();
+    llvm::APSInt min = getConstexprInt(Attr->getMin(), FD->getASTContext());
+    llvm::APSInt max = getConstexprInt(Attr->getMax(), FD->getASTContext());
+
+    unsigned Min = min.getZExtValue();
+    unsigned Max = max.getZExtValue();
 
     if (Min != 0) {
       assert((Max == 0 || Min <= Max) && "Min must be less than or equal Max");

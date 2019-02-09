@@ -458,13 +458,47 @@ void tools::AddGoldPlugin(const ToolChain &ToolChain, const ArgList &Args,
         Args.MakeArgString(Twine("-plugin-opt=stats-file=") + StatsFile));
 }
 
+std::string tools::FindDebugInLibraryPath() {
+  const char *DirList = ::getenv("LIBRARY_PATH");
+  if (!DirList)
+    return "";
+  StringRef Dirs(DirList);
+  if (Dirs.empty()) // Empty string should not add '.'.
+    return "";
+
+  StringRef::size_type Delim;
+  while ((Delim = Dirs.find(llvm::sys::EnvPathSeparator)) != StringRef::npos) {
+    if (Delim != 0) { // Leading colon.
+      if (Dirs.substr(0, Delim).endswith("lib-debug"))
+        return Dirs.substr(0, Delim).str();
+    }
+    Dirs = Dirs.substr(Delim + 1);
+  }
+  if (!Dirs.empty()) {
+    if (Dirs.endswith("lib-debug"))
+      return Dirs.str();
+  }
+  return "";
+}
+
 void tools::addArchSpecificRPath(const ToolChain &TC, const ArgList &Args,
                                  ArgStringList &CmdArgs) {
-  if (!Args.hasFlag(options::OPT_frtlib_add_rpath,
-                    options::OPT_fno_rtlib_add_rpath, false))
-    return;
-
-  std::string CandidateRPath = TC.getArchSpecificLibPath();
+  std::string CandidateRPath;
+  if (TC.getDriver().getOpenMPRuntime(Args) == Driver::OMPRT_OMP) {
+    // The AOMP compiler installation for OpenMP has both release and debug
+    // versions of host runtimes and device runtimes.  If LIBRARY_PATH
+    // does not contain lib-debug, then only get lomp and lomptarget
+    // from compiler installation.
+    const Driver &D = TC.getDriver();
+    CandidateRPath = FindDebugInLibraryPath();
+    if (CandidateRPath.empty())
+      CandidateRPath = D.Dir + "/../lib";
+  } else {
+    if (!Args.hasFlag(options::OPT_frtlib_add_rpath,
+                      options::OPT_fno_rtlib_add_rpath, false))
+      return;
+    CandidateRPath = TC.getArchSpecificLibPath();
+  }
   if (TC.getVFS().exists(CandidateRPath)) {
     CmdArgs.push_back("-rpath");
     CmdArgs.push_back(Args.MakeArgString(CandidateRPath.c_str()));
@@ -481,6 +515,7 @@ bool tools::addOpenMPRuntime(ArgStringList &CmdArgs, const ToolChain &TC,
   switch (TC.getDriver().getOpenMPRuntime(Args)) {
   case Driver::OMPRT_OMP:
     CmdArgs.push_back("-lomp");
+    addArchSpecificRPath(TC, Args, CmdArgs);
     break;
   case Driver::OMPRT_GOMP:
     CmdArgs.push_back("-lgomp");
@@ -500,6 +535,9 @@ bool tools::addOpenMPRuntime(ArgStringList &CmdArgs, const ToolChain &TC,
     CmdArgs.push_back("-lomptarget");
 
   addArchSpecificRPath(TC, Args, CmdArgs);
+
+  // FIXME add if driver called with -stdlib=libstdc++
+  CmdArgs.push_back("-lstdc++");
 
   return true;
 }
@@ -1461,4 +1499,124 @@ SmallString<128> tools::getStatsFileName(const llvm::opt::ArgList &Args,
   llvm::sys::path::append(StatsFile, BaseName);
   llvm::sys::path::replace_extension(StatsFile, "stats");
   return StatsFile;
+}
+
+/// SDLSearch: Search for Static Device Library
+bool tools::SDLSearch(const llvm::opt::ArgList &DriverArgs,
+                      llvm::opt::ArgStringList &CC1Args,
+                      SmallVector<std::string, 8> LibraryPaths,
+                      std::string libname, StringRef ArchName,
+                      StringRef GpuArch, bool isBitCodeSDL,
+                      bool postClangLink) {
+  std::string archname = ArchName.str();
+  std::string gpuname = GpuArch.str();
+  SmallVector<std::string, 12> SDL_FileNames;
+  if (isBitCodeSDL) {
+    // For bitcode SDL, search for these 12 relative SDL filenames
+    SDL_FileNames.push_back(std::string("/libdevice/libbc-" + libname + "-" +
+                                        archname + "-" + gpuname + ".a"));
+    SDL_FileNames.push_back(std::string("/libbc-" + libname + "-" + archname +
+                                        "-" + gpuname + ".a"));
+    SDL_FileNames.push_back(
+        std::string("/libdevice/libbc-" + libname + "-" + archname + ".a"));
+    SDL_FileNames.push_back(
+        std::string("/libbc-" + libname + "-" + archname + ".a"));
+    SDL_FileNames.push_back(std::string("/libdevice/libbc-" + libname + ".a"));
+    SDL_FileNames.push_back(std::string("/libbc-" + libname + ".a"));
+    SDL_FileNames.push_back(std::string("/libdevice/lib" + libname + "-" +
+                                        archname + "-" + gpuname + ".bc"));
+    SDL_FileNames.push_back(
+        std::string("/lib" + libname + "-" + archname + "-" + gpuname + ".bc"));
+    SDL_FileNames.push_back(
+        std::string("/libdevice/lib" + libname + "-" + archname + ".bc"));
+    SDL_FileNames.push_back(
+        std::string("/lib" + libname + "-" + archname + ".bc"));
+    SDL_FileNames.push_back(std::string("/libdevice/lib" + libname + ".bc"));
+    SDL_FileNames.push_back(std::string("/lib" + libname + ".bc"));
+  } else {
+    // Otherwise only 4 names to search for machine-code SDL
+    SDL_FileNames.push_back(std::string("/libdevice/lib" + libname + "-" +
+                                        archname + "-" + gpuname + ".a"));
+    SDL_FileNames.push_back(
+        std::string("/lib" + libname + "-" + archname + "-" + gpuname + ".a"));
+    SDL_FileNames.push_back(
+        std::string("/libdevice/lib" + libname + "-" + archname + ".a"));
+    SDL_FileNames.push_back(
+        std::string("/lib" + libname + "-" + archname + ".a"));
+  }
+
+  bool FoundSDL = false;
+  for (std::string LibraryPath : LibraryPaths) {
+    for (std::string SDL_FileName : SDL_FileNames) {
+      std::string FullName = std::string(LibraryPath + SDL_FileName);
+      if (llvm::sys::fs::exists(FullName)) {
+        if (postClangLink)
+          CC1Args.push_back("-mlink-builtin-bitcode");
+        CC1Args.push_back(DriverArgs.MakeArgString(FullName));
+        FoundSDL = true;
+        break;
+      }
+    }
+    if (FoundSDL)
+      break;
+  }
+  return FoundSDL;
+}
+
+void tools::AddStaticDeviceLibs(const llvm::opt::ArgList &DriverArgs,
+                                llvm::opt::ArgStringList &CC1Args,
+                                StringRef ArchName, StringRef GpuArch,
+                                const Driver &D, bool isBitCodeSDL,
+                                bool postClangLink) {
+
+  SmallVector<std::string, 8> LibraryPaths;
+  // Add search directories from LIBRARY_PATH env variable
+  llvm::Optional<std::string> LibPath =
+      llvm::sys::Process::GetEnv("LIBRARY_PATH");
+  if (LibPath) {
+    SmallVector<StringRef, 8> Frags;
+    const char EnvPathSeparatorStr[] = {llvm::sys::EnvPathSeparator, '\0'};
+    llvm::SplitString(*LibPath, Frags, EnvPathSeparatorStr);
+    for (StringRef Path : Frags)
+      LibraryPaths.emplace_back(Path.trim());
+  }
+
+  // Add directories from user-specified -L options
+  for (std::string Search_Dir : DriverArgs.getAllArgValues(options::OPT_L))
+    LibraryPaths.emplace_back(Search_Dir);
+
+  // Add path to lib-debug folders
+  SmallString<256> DefaultLibPath =
+    llvm::sys::path::parent_path(D.Dir);
+  llvm::sys::path::append(DefaultLibPath,
+      Twine("lib") + CLANG_LIBDIR_SUFFIX);
+  LibraryPaths.emplace_back(DefaultLibPath.c_str());
+
+  // Build list of Static Device Libraries SDLs specified by -l option
+  SmallVector<std::string, 16> SDL_Names;
+  for (std::string SDL_Name : DriverArgs.getAllArgValues(options::OPT_l)) {
+    // No SDL for -lomp or -lcudart, they only have host libs
+    if (SDL_Name != "omp" && SDL_Name != "cudart") {
+      bool inSDL_Names = false;
+      for (std::string OldName : SDL_Names) {
+        if (OldName == SDL_Name)
+          inSDL_Names = true;
+      }
+      if (!inSDL_Names) // Avoid duplicates in list of SDL_Names
+        SDL_Names.emplace_back(SDL_Name);
+    }
+  }
+
+  for (std::string SDL_Name : SDL_Names) {
+    SDLSearch(DriverArgs, CC1Args, LibraryPaths, SDL_Name, ArchName, GpuArch,
+              isBitCodeSDL, postClangLink);
+  }
+
+  // Add the autoinclude that allows system headers to work for devices
+  if (postClangLink) {
+    CC1Args.push_back("-include");
+    SmallString<128> P(D.ResourceDir);
+    llvm::sys::path::append(P, "/include/__clang_openmp_runtime_wrapper.h");
+    CC1Args.push_back(DriverArgs.MakeArgString(P));
+  }
 }

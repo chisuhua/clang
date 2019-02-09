@@ -3292,6 +3292,10 @@ static void RenderDebugOptions(const ToolChain &TC, const Driver &D,
 
   // Adjust the debug info kind for the given toolchain.
   TC.adjustDebugInfoKind(DebugInfoKind, Args);
+  // FIXME: temporarily Turn off debuging on GPUs for openmp
+  if ((T.getArch() == llvm::Triple::amdgcn) ||
+      (T.getArch() == llvm::Triple::nvptx64))
+    DebugInfoKind = codegenoptions::NoDebugInfo;
 
   RenderDebugEnablingArgs(Args, CmdArgs, DebugInfoKind, DWARFVersion,
                           DebuggerTuning);
@@ -4939,7 +4943,11 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   // Enable vectorization per default according to the optimization level
   // selected. For optimization levels that want vectorization we use the alias
   // option to simplify the hasFlag logic.
-  bool EnableVec = shouldEnableVectorizerAtOLevel(Args, false);
+  // Do not vectorize on GPUs
+  // FIXME: Temporarily turn off vectorization for GPUs
+  bool EnableVec = shouldEnableVectorizerAtOLevel(Args, false) &&
+                   !(Triple.getArch() == llvm::Triple::amdgcn ||
+                     Triple.getArch() == llvm::Triple::nvptx64);
   OptSpecifier VectorizeAliasOption =
       EnableVec ? options::OPT_O_Group : options::OPT_fvectorize;
   if (Args.hasFlag(options::OPT_fvectorize, VectorizeAliasOption,
@@ -4947,7 +4955,9 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back("-vectorize-loops");
 
   // -fslp-vectorize is enabled based on the optimization level selected.
-  bool EnableSLPVec = shouldEnableVectorizerAtOLevel(Args, true);
+  bool EnableSLPVec = shouldEnableVectorizerAtOLevel(Args, true) &&
+                      !(Triple.getArch() == llvm::Triple::amdgcn ||
+                        Triple.getArch() == llvm::Triple::nvptx64);
   OptSpecifier SLPVectAliasOption =
       EnableSLPVec ? options::OPT_O_Group : options::OPT_fslp_vectorize;
   if (Args.hasFlag(options::OPT_fslp_vectorize, SLPVectAliasOption,
@@ -5189,18 +5199,14 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
 
   // Host-side cuda compilation receives all device-side outputs in a single
   // fatbin as Inputs[1]. Include the binary with -fcuda-include-gpubinary.
-  // TODO schi if ((IsCuda || IsHIP) && CudaDeviceInput) {
-  if ( IsCuda && CudaDeviceInput) {
+  if ((IsCuda || IsHIP) && CudaDeviceInput) {
       CmdArgs.push_back("-fcuda-include-gpubinary");
       CmdArgs.push_back(CudaDeviceInput->getFilename());
       if (Args.hasFlag(options::OPT_fgpu_rdc, options::OPT_fno_gpu_rdc, false))
         CmdArgs.push_back("-fgpu-rdc");
   }
 
-  // TODO schi if (IsCuda) {
-  if (IsCuda || IsHIP) {
-    if (Args.hasFlag(options::OPT_fgpu_rdc, options::OPT_fno_gpu_rdc, false))
-      CmdArgs.push_back("-fgpu-rdc");
+  if (IsCuda) {
     if (Args.hasFlag(options::OPT_fcuda_short_ptr,
                      options::OPT_fno_cuda_short_ptr, false))
       CmdArgs.push_back("-fcuda-short-ptr");
