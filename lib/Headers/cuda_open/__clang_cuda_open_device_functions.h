@@ -1348,6 +1348,32 @@ __DEVICE__ float y1f(float __a) { return __nv_y1f(__a); }
 __DEVICE__ double yn(int __a, double __b) { return __nv_yn(__a, __b); }
 __DEVICE__ float ynf(int __a, float __b) { return __nv_ynf(__a, __b); }
 
+// TODO schi copy below from hcc_detail/device_functions.h
+__device__ static inline unsigned int __bitextract_u32(unsigned int src0, unsigned int src1, unsigned int src2) {
+    unsigned int offset = src1 & 31;
+    unsigned int width = src2 & 31;
+    return width == 0 ? 0 : (src0 << (32 - offset - width)) >> (32 - width);
+}
+
+__device__ static inline unsigned long long __bitextract_u64(unsigned long long src0, unsigned int src1, unsigned int src2) {
+    unsigned long long offset = src1 & 63;
+    unsigned long long width = src2 & 63;
+    return width == 0 ? 0 : (src0 << (64 - offset - width)) >> (64 - width);
+}
+__device__ static inline unsigned int __bitinsert_u32(unsigned int src0, unsigned int src1, unsigned int src2, unsigned int src3) {
+    unsigned int offset = src2 & 31;
+    unsigned int width = src3 & 31;
+    unsigned int mask = (1 << width) - 1;
+    return ((src0 & ~(mask << offset)) | ((src1 & mask) << offset));
+}
+
+__device__ static inline unsigned long long __bitinsert_u64(unsigned long long src0, unsigned long long src1, unsigned int src2, unsigned int src3) {
+    unsigned long long offset = src2 & 63;
+    unsigned long long width = src3 & 63;
+    unsigned long long mask = (1 << width) - 1;
+    return ((src0 & ~(mask << offset)) | ((src1 & mask) << offset));
+}
+
 #undef __DEVICE__
 #undef __FAST_OR_SLOW
 #ifndef __USE_OPEN_HEADERS__

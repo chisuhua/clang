@@ -36,6 +36,9 @@ THE SOFTWARE.
 //#include <hip/clang_detail/driver_types.h>
 //#include <hip/clang_detail/hip_texture_types.h>
 
+// TODO schi add for missing hipSurfaceObject_t
+#include <hip/clang_detail/hip_surface_types.h>
+
 #include <hip/hip_common.h>
 
 #define hipLaunchKernelGGL(kernelName, numblocks, numthreads, memperblock, streamId, ...) \
@@ -170,6 +173,7 @@ typedef struct hipDeviceProp_t {
     int isMultiGpuBoard;                        ///< 1 if device is on a multi-GPU board, 0 if not.
     int canMapHostMemory;                       ///< Check whether HIP can map host memory
     int gcnArch;                                ///< AMD GCN Arch Value. Eg: 803, 701
+    int integrated;                             ///< APU vs dGPU TODO schi add it to same as hip
  } hipDeviceProp_t;
 
 
@@ -322,6 +326,7 @@ typedef enum hipDeviceAttribute_t {
     hipDeviceAttributePciDeviceId,                          ///< PCI Device ID.
     hipDeviceAttributeMaxSharedMemoryPerMultiprocessor,     ///< Maximum Shared Memory Per Multiprocessor.
     hipDeviceAttributeIsMultiGpuBoard,                      ///< Multiple GPU devices.
+    hipDeviceAttributeIntegrated,                           ///< TODO schi add iGPU
 } hipDeviceAttribute_t;
 
 enum hipComputeMode {
@@ -354,7 +359,7 @@ static inline hipError_t hipHostMalloc( T** ptr, size_t size, unsigned int flags
 #endif
 // --------------------------------------------------------------------------------------
 
-//  We can skip driver_types because texture_types includes these 
+//  We can skip driver_types because texture_types includes these
 #include <hip/driver_types.h>
 #ifdef __HIP_TEXTURE__
 #include "hip_texture_types.h"
@@ -477,9 +482,29 @@ typedef enum hipSharedMemConfig {
 //} hipEvent_t;
 
 
+// TODO schi add
+typedef struct hipFuncAttributes {
+    int binaryVersion;
+    int cacheModeCA;
+    size_t constSizeBytes;
+    size_t localSizeBytes;
+    int maxDynamicSharedSizeBytes;
+    int maxThreadsPerBlock;
+    int numRegs;
+    int preferredShmemCarveout;
+    int ptxVersion;
+    size_t sharedSizeBytes;
+} hipFuncAttributes;
 
+// TODO schi add
+hipError_t hipFuncGetAttributes(hipFuncAttributes* attr, const void* func);
 
-
+// TODO schi add
+struct Agent_global {
+    std::string name;
+    hipDeviceptr_t address;
+    uint32_t byte_cnt;
+};
 
 
 /**
@@ -942,6 +967,10 @@ typedef void(* hipStreamCallback_t)(hipStream_t stream,  hipError_t status, void
  */
 hipError_t hipStreamAddCallback(hipStream_t stream, hipStreamCallback_t callback, void *userData, unsigned int flags);
 
+
+hipError_t hipDeviceGetStreamPriorityRange(int* leastPriority, int* greatestPriority);
+
+hipError_t hipStreamCreateWithPriority(hipStream_t* stream, unsigned int flags, int priority);
 
 // end doxygen Stream
 /**
@@ -1414,6 +1443,38 @@ hipError_t hipMemcpyDtoHAsync(void* dst, hipDeviceptr_t src, size_t sizeBytes, h
  */
 hipError_t hipMemcpyDtoDAsync(hipDeviceptr_t dst, hipDeviceptr_t src, size_t sizeBytes, hipStream_t stream);
 
+/**
+ *  @brief Copies the memory address of symbol @p symbolName to @p devPtr
+ *
+ * @param[in]  symbolName - Symbol on device
+ * @param[out] devPtr - Pointer to a pointer to the memory referred to by the symbol
+ * @return #hipSuccess, #hipErrorNotInitialized, #hipErrorNotFound
+ *
+ *  @see hipGetSymbolSize, hipMemcpyToSymbol, hipMemcpyFromSymbol, hipMemcpyToSymbolAsync,
+ * hipMemcpyFromSymbolAsync
+ */
+// TODO below two copy from hcc_detail/hip_runtime_api.h
+// original is inline implemented in hcc_detail/hip_runtime_api.h,
+// need to add clang implementation in hip if compile hip with clang
+// inline
+// __attribute__((visibility("hidden")))
+hipError_t hipGetSymbolAddress(void** devPtr, const void* symbolName) ;
+
+
+/**
+ *  @brief Copies the size of symbol @p symbolName to @p size
+ *
+ * @param[in]  symbolName - Symbol on device
+ * @param[out] size - Pointer to the size of the symbol
+ * @return #hipSuccess, #hipErrorNotInitialized, #hipErrorNotFound
+ *
+ *  @see hipGetSymbolSize, hipMemcpyToSymbol, hipMemcpyFromSymbol, hipMemcpyToSymbolAsync,
+ * hipMemcpyFromSymbolAsync
+ */
+// inline
+// __attribute__((visibility("hidden")))
+hipError_t hipGetSymbolSize(size_t* size, const void* symbolName) ;
+
 
 /**
  *  @brief Copies @p sizeBytes bytes from the memory area pointed to by @p src to the memory area pointed to by @p offset bytes from the start of symbol @p symbol.
@@ -1505,6 +1566,19 @@ hipError_t hipMemset(void* dst, int  value, size_t sizeBytes );
  */
 hipError_t hipMemsetD8(hipDeviceptr_t dest, unsigned char  value, size_t sizeBytes );
 
+
+// TODO schi I copy from hip/hcc_detail/hip_runtime_ap.h, why miss here
+/**
+ *  @brief Fills the memory area pointed to by dest with the constant integer
+ * value for specified number of times.
+ *
+ *  @param[out] dst Data being filled
+ *  @param[in]  constant value to be set
+ *  @param[in]  number of values to be set
+ *  @return #hipSuccess, #hipErrorInvalidValue, #hipErrorNotInitialized
+ */
+hipError_t hipMemsetD32(hipDeviceptr_t dest, int value, size_t count);
+
 /**
  *  @brief Fills the first sizeBytes bytes of the memory area pointed to by dev with the constant byte value value.
  *
@@ -1524,6 +1598,30 @@ hipError_t hipMemsetAsync(void* dst, int  value, size_t sizeBytes, hipStream_t s
 hipError_t hipMemsetAsync(void* dst, int value, size_t sizeBytes, hipStream_t stream);
 #endif
 
+// TODO schi I copy from hip/hcc_detail/hip_runtime_api.h
+/**
+ *  @brief Fills the memory area pointed to by dev with the constant integer
+ * value for specified number of times.
+ *
+ *  hipMemsetD32Async() is asynchronous with respect to the host, so the call may return before the
+ * memset is complete. The operation can optionally be associated to a stream by passing a non-zero
+ * stream argument. If stream is non-zero, the operation may overlap with operations in other
+ * streams.
+ *
+ *  @param[out] dst Pointer to device memory
+ *  @param[in]  value - Value to set for each byte of specified memory
+ *  @param[in]  count - number of values to be set
+ *  @param[in]  stream - Stream identifier
+ *  @return #hipSuccess, #hipErrorInvalidValue, #hipErrorMemoryFree
+ */
+#if __cplusplus
+hipError_t hipMemsetD32Async(hipDeviceptr_t dst, int value, size_t count,
+                             hipStream_t stream = 0);
+#else
+hipError_t hipMemsetD32Async(hipDeviceptr_t dst, int value, size_t count,
+                             hipStream_t stream );
+#endif
+
 /**
  *  @brief Fills the memory area pointed to by dst with the constant value.
  *
@@ -1536,6 +1634,51 @@ hipError_t hipMemsetAsync(void* dst, int value, size_t sizeBytes, hipStream_t st
  */
 
 hipError_t hipMemset2D(void* dst, size_t pitch, int value, size_t width, size_t height);
+
+// TODO schi copy from hcc_detail/hip_runtime_api.h
+/**
+ *  @brief Fills asynchronously the memory area pointed to by dst with the constant value.
+ *
+ *  @param[in]  dst Pointer to device memory
+ *  @param[in]  pitch - data size in bytes
+ *  @param[in]  value - constant value to be set
+ *  @param[in]  width
+ *  @param[in]  height
+ *  @param[in]  stream
+ *  @return #hipSuccess, #hipErrorInvalidValue, #hipErrorMemoryFree
+ */
+
+#if __cplusplus
+hipError_t hipMemset2DAsync(void* dst, size_t pitch, int value, size_t width, size_t height,hipStream_t stream = 0);
+#else
+hipError_t hipMemset2DAsync(void* dst, size_t pitch, int value, size_t width, size_t height,hipStream_t stream );
+#endif
+
+// TODO schi copy from hcc_detail/hip_runtime_api
+/**
+ *  @brief Fills synchronously the memory area pointed to by pitchedDevPtr with the constant value.
+ *
+ *  @param[in] pitchedDevPtr
+ *  @param[in]  value - constant value to be set
+ *  @param[in]  extent
+ *  @return #hipSuccess, #hipErrorInvalidValue, #hipErrorMemoryFree
+ */
+hipError_t hipMemset3D(hipPitchedPtr pitchedDevPtr, int  value, hipExtent extent );
+/**
+ *  @brief Fills asynchronously the memory area pointed to by pitchedDevPtr with the constant value.
+ *
+ *  @param[in] pitchedDevPtr
+ *  @param[in]  value - constant value to be set
+ *  @param[in]  extent
+ *  @param[in]  stream
+ *  @return #hipSuccess, #hipErrorInvalidValue, #hipErrorMemoryFree
+ */
+#if __cplusplus
+hipError_t hipMemset3DAsync(hipPitchedPtr pitchedDevPtr, int  value, hipExtent extent ,hipStream_t stream = 0);
+#else
+hipError_t hipMemset3DAsync(hipPitchedPtr pitchedDevPtr, int  value, hipExtent extent ,hipStream_t stream );
+#endif
+
 
 /**
  * @brief Query memory info.
@@ -1571,6 +1714,11 @@ hipError_t hipMallocArray(hipArray** array, const struct hipChannelFormatDesc* d
                           size_t width, size_t height, unsigned int flags);
 #endif
 hipError_t hipArrayCreate ( hipArray** pHandle, const HIP_ARRAY_DESCRIPTOR* pAllocateArray );
+
+// TODO schi copy from hcc_detail/hip_runtime_api
+hipError_t hipArray3DCreate(hipArray** array, const HIP_ARRAY_DESCRIPTOR* pAllocateArray);
+hipError_t hipMalloc3D(hipPitchedPtr* pitchedDevPtr, hipExtent extent);
+
 /**
  *  @brief Frees an array on the device.
  *
@@ -1668,6 +1816,26 @@ hipError_t hipMemcpy2DToArray(hipArray* dst, size_t wOffset, size_t hOffset, con
  */
 hipError_t hipMemcpyToArray(hipArray* dst, size_t wOffset, size_t hOffset,
                             const void* src, size_t count, hipMemcpyKind kind);
+
+
+// TODO schi copy from hip/hcc_detail/hip_runtime_api.h
+/**
+ *  @brief Copies data between host and device.
+ *
+ *  @param[in]   dst       Destination memory address
+ *  @param[in]   srcArray  Source memory address
+ *  @param[in]   woffset   Source starting X offset
+ *  @param[in]   hOffset   Source starting Y offset
+ *  @param[in]   count     Size in bytes to copy
+ *  @param[in]   kind      Type of transfer
+ *  @return      #hipSuccess, #hipErrorInvalidValue, #hipErrorInvalidPitchValue,
+ * #hipErrorInvalidDevicePointer, #hipErrorInvalidMemcpyDirection
+ *
+ *  @see hipMemcpy, hipMemcpy2DToArray, hipMemcpy2D, hipMemcpyFromArray, hipMemcpyToSymbol,
+ * hipMemcpyAsync
+ */
+hipError_t hipMemcpyFromArray(void* dst, hipArray_const_t srcArray, size_t wOffset, size_t hOffset,
+                              size_t count, hipMemcpyKind kind);
 
 
 hipError_t hipMemcpy3D(const struct hipMemcpy3DParms *p);
@@ -2621,7 +2789,7 @@ hipError_t hipTexRefSetAddress2D( hipTextureReference* tex, const HIP_ARRAY_DESC
 
 #endif // __HIP_TEXTURE__
 
-#endif // cpp 
+#endif // cpp
 
 
 /**
