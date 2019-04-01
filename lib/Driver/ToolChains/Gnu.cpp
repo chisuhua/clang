@@ -477,8 +477,8 @@ void tools::gnutools::Linker::ConstructJob(Compilation &C, const JobAction &JA,
   getToolChain().addProfileRTLibs(Args, CmdArgs);
 
   if (JA.isHostOffloading(Action::OFK_HIP)) {
-    CmdArgs.push_back("-latmi_runtime");
-    CmdArgs.push_back("-lhip_hcc");
+    // TODO schi remove for don't need right now CmdArgs.push_back("-latmi_runtime");
+    // TODO schi it is replace to pasim's executable_hip CmdArgs.push_back("-lhip_hcc");
     CmdArgs.push_back("-rpath");
     CmdArgs.push_back(Args.MakeArgString(D.Dir + "/../lib"));
   }
