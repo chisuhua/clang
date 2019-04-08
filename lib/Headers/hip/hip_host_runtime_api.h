@@ -336,28 +336,6 @@ enum hipComputeMode {
   hipComputeModeExcusiveProcess = 3
 };
 
-/**
- * @brief: C++ wrapper for hipMalloc
- *
- * Perform automatic type conversion to eliminate need for excessive typecasting (ie void**)
- *
- * @see hipMalloc
- */
-#ifdef __cplusplus
-template<class T>
-static inline hipError_t hipMalloc ( T** devPtr, size_t size)
-{
-    return hipMalloc((void**)devPtr, size);
-}
-
-// Provide an override to automatically typecast the pointer type from void**, and also provide a default for the flags.
-template<class T>
-static inline hipError_t hipHostMalloc( T** ptr, size_t size, unsigned int flags = hipHostMallocDefault)
-{
-    return hipHostMalloc((void**)ptr, size, flags);
-}
-#endif
-// --------------------------------------------------------------------------------------
 
 //  We can skip driver_types because texture_types includes these
 #include <hip/driver_types.h>
@@ -2451,7 +2429,12 @@ hipError_t hipModuleLaunchKernel(hipFunction_t f,
 /**
  * @}
  */
-
+hipError_t hipExtModuleLaunchKernel(hipFunction_t f, uint32_t globalWorkSizeX,
+    uint32_t globalWorkSizeY, uint32_t globalWorkSizeZ,
+    uint32_t localWorkSizeX, uint32_t localWorkSizeY,
+    uint32_t localWorkSizeZ, size_t sharedMemBytes,
+    hipStream_t hStream, void** kernelParams, void** extra,
+    hipEvent_t startEvent, hipEvent_t stopEvent, uint32_t flags);
 
 /**
  *-------------------------------------------------------------------------------------------------
@@ -2589,6 +2572,30 @@ __host__ hipError_t hipSetupArgument (const void *arg, size_t size, size_t offse
 #ifdef __cplusplus
 } /* extern "c" */
 #endif
+
+/**
+ * @brief: C++ wrapper for hipMalloc
+ *
+ * Perform automatic type conversion to eliminate need for excessive typecasting (ie void**)
+ *
+ * @see hipMalloc
+ */
+#ifdef __cplusplus
+template<class T>
+static inline hipError_t hipMalloc ( T** devPtr, size_t size)
+{
+    return hipMalloc((void**)devPtr, size);
+}
+
+// Provide an override to automatically typecast the pointer type from void**, and also provide a default for the flags.
+template<class T>
+static inline hipError_t hipHostMalloc( T** ptr, size_t size, unsigned int flags = hipHostMallocDefault)
+{
+    return hipHostMalloc((void**)ptr, size, flags);
+}
+#endif
+
+// --------------------------------------------------------------------------------------
 
 #ifdef __cplusplus
 
