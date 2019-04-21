@@ -387,6 +387,7 @@
 #define cudaResViewFormatUnsignedShort2 hipResViewFormatUnsignedShort2
 #define cudaResViewFormatUnsignedShort4 hipResViewFormatUnsignedShort4
 
+#define cudaEvent_t hipEvent_t
 
 // Kernel builtin 
 // #define __syncthreads() hc_barrier(CLK_LOCAL_MEM_FENCE)
