@@ -1,3 +1,11 @@
+// FIXME 
+// work around for __syncthreads
+#define __syncthreads()
+
+// #include "hip/hip_runtime_api_4_cuda_runtime.h"
+#include "hip/hip_host_runtime_api.h"
+
+
 #define cuModule hipModule_t
 #define cuFunction hipFunction_t
 
@@ -6,8 +14,21 @@
 #define cudaGetErrorString hipGetErrorString
 #define cudaStream_t hipStream_t
 
-#define cudaMalloc hipMalloc
+// NOTE: mlvm is unified memory
+// FIXME mlvm how to auto Register/Unregister after switch to hipHostMalloc?
+// #define cudaMalloc hipMalloc
+#define cudaMalloc hipHostMalloc
+#define hipMalloc hipHostMalloc
+
 #define cudaHostMalloc hipHostMalloc
+
+// #define cudaFree hipFree
+#define cudaFree hipHostFree
+#define hipFree hipHostFree
+
+#define cudaFreeHost hipFreeHost
+#define cudaHostFree hipHostFree
+
 #define cudaFuncGetAttributes hipFuncGetAttributes
 #define cudaDeviceSynchronize hipDeviceSynchronize
 #define cudaDeviceReset hipDeviceReset
@@ -48,18 +69,19 @@
 #define cudaEventElapsedTime hipEventElapsedTime
 #define cudaEventQuery hipEventQuery
 #define cudaPointerGetAttributes hipPointerGetAttributes
-#define cudaMalloc hipMalloc
 #define cudaMallocHost hipMallocHost
 #define cudaHostMalloc hipHostMalloc
-#define cudaHostAlloc hipHostAlloc
+
+// #define cudaHostAlloc hipHostAlloc
+#define cudaHostAlloc hipHostMalloc
+
 #define cudaHostGetDevicePointer hipHostGetDevicePointer
 #define cudaHostGetFlags hipHostGetFlags
 #define cudaHostRegister hipHostRegister
 #define cudaHostUnregister hipHostUnregister
 #define cudaMallocPitch hipMallocPitch
-#define cudaFree hipFree
-#define cudaFreeHost hipFreeHost
-#define cudaHostFree hipHostFree
+
+
 #define cudaMemcpy hipMemcpy
 #define cudaMemcpyHtoD hipMemcpyHtoD
 #define cudaMemcpyDtoH hipMemcpyDtoH
@@ -69,10 +91,16 @@
 #define cudaMemcpyDtoDAsync hipMemcpyDtoDAsync
 #define cudaGetSymbolAddress hipGetSymbolAddress
 #define cudaGetSymbolSize hipGetSymbolSize
+
+// FIXME 
+#define hipMemcpyToSymbol hip_impl::hipMemcpyToSymbol
+#define hipMemcpyFromSymbol hip_impl::hipMemcpyFromSymbol
+
 #define cudaMemcpyToSymbol hipMemcpyToSymbol
 #define cudaMemcpyToSymbolAsync hipMemcpyToSymbolAsync
 #define cudaMemcpyFromSymbol hipMemcpyFromSymbol
 #define cudaMemcpyFromSymbolAsync hipMemcpyFromSymbolAsync
+
 #define cudaMemcpyAsync hipMemcpyAsync
 #define cudaMemcpyAsync hipMemcpyAsync
 #define cudaMemset hipMemset
@@ -388,6 +416,8 @@
 #define cudaResViewFormatUnsignedShort4 hipResViewFormatUnsignedShort4
 
 #define cudaEvent_t hipEvent_t
+
+#define CUDART_CB
 
 // Kernel builtin 
 // #define __syncthreads() hc_barrier(CLK_LOCAL_MEM_FENCE)

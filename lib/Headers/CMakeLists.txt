@@ -158,6 +158,8 @@ set(hip_files
   hip/hip_common.h
   hip/driver_types.h
   hip/hcc_detail/driver_types.h
+  hip/clang_detail/hip_surface_types.h
+  cuda_runtime.h
 )
 
 #set(hip_hcc_files
