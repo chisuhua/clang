@@ -204,7 +204,6 @@ static LValueOrRValue emitSuspendExpression(CodeGenFunction &CGF, CGCoroData &Co
     BasicBlock *RealSuspendBlock =
         CGF.createBasicBlock(Prefix + Twine(".suspend.bool"));
     CGF.Builder.CreateCondBr(SuspendRet, RealSuspendBlock, ReadyBlock);
-    SuspendBlock = RealSuspendBlock;
     CGF.EmitBlock(RealSuspendBlock);
   }
 
@@ -406,7 +405,7 @@ struct CallCoroEnd final : public EHScopeStack::Cleanup {
     if (Bundles.empty()) {
       // Otherwise, (landingpad model), create a conditional branch that leads
       // either to a cleanup block or a block with EH resume instruction.
-      auto *ResumeBB = CGF.getEHResumeBlock(/*cleanup=*/true);
+      auto *ResumeBB = CGF.getEHResumeBlock(/*isCleanup=*/true);
       auto *CleanupContBB = CGF.createBasicBlock("cleanup.cont");
       CGF.Builder.CreateCondBr(CoroEnd, ResumeBB, CleanupContBB);
       CGF.EmitBlock(CleanupContBB);
@@ -732,10 +731,10 @@ RValue CodeGenFunction::EmitCoroutineIntrinsic(const CallExpr *E,
     Args.push_back(llvm::ConstantTokenNone::get(getLLVMContext()));
     break;
   }
-  for (auto &Arg : E->arguments())
+  for (const Expr *Arg : E->arguments())
     Args.push_back(EmitScalarExpr(Arg));
 
-  llvm::Value *F = CGM.getIntrinsic(IID);
+  llvm::Function *F = CGM.getIntrinsic(IID);
   llvm::CallInst *Call = Builder.CreateCall(F, Args);
 
   // Note: The following code is to enable to emit coro.id and coro.begin by

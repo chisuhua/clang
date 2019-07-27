@@ -380,6 +380,7 @@ public:
   /// if the expression is a variable initializer or a function argument, the
   /// type of the corresponding variable or function parameter.
   QualType getPreferredType() const { return PreferredType; }
+  void setPreferredType(QualType T) { PreferredType = T; }
 
   /// Retrieve the type of the base object in a member-access
   /// expression.
@@ -991,10 +992,6 @@ class CodeCompleteConsumer {
 protected:
   const CodeCompleteOptions CodeCompleteOpts;
 
-  /// Whether the output format for the code-completion consumer is
-  /// binary.
-  bool OutputIsBinary;
-
 public:
   class OverloadCandidate {
   public:
@@ -1065,9 +1062,8 @@ public:
                                       bool IncludeBriefComments) const;
   };
 
-  CodeCompleteConsumer(const CodeCompleteOptions &CodeCompleteOpts,
-                       bool OutputIsBinary)
-      : CodeCompleteOpts(CodeCompleteOpts), OutputIsBinary(OutputIsBinary) {}
+  CodeCompleteConsumer(const CodeCompleteOptions &CodeCompleteOpts)
+      : CodeCompleteOpts(CodeCompleteOpts) {}
 
   /// Whether the code-completion consumer wants to see macros.
   bool includeMacros() const {
@@ -1104,9 +1100,6 @@ public:
   bool loadExternal() const {
     return CodeCompleteOpts.LoadExternal;
   }
-
-  /// Determine whether the output of this consumer is binary.
-  bool isOutputBinary() const { return OutputIsBinary; }
 
   /// Deregisters and destroys this code-completion consumer.
   virtual ~CodeCompleteConsumer();
@@ -1180,7 +1173,7 @@ public:
   /// results to the given raw output stream.
   PrintingCodeCompleteConsumer(const CodeCompleteOptions &CodeCompleteOpts,
                                raw_ostream &OS)
-      : CodeCompleteConsumer(CodeCompleteOpts, false), OS(OS),
+      : CodeCompleteConsumer(CodeCompleteOpts), OS(OS),
         CCTUInfo(std::make_shared<GlobalCodeCompletionAllocator>()) {}
 
   /// Prints the finalized code-completion results.

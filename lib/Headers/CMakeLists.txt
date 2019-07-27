@@ -6,6 +6,7 @@ set(files
   armintr.h
   arm64intr.h
   avx2intrin.h
+  avx512bf16intrin.h
   avx512bwintrin.h
   avx512bitalgintrin.h
   avx512vlbitalgintrin.h
@@ -21,10 +22,13 @@ set(files
   avx512vbmivlintrin.h
   avx512vbmi2intrin.h
   avx512vlvbmi2intrin.h
+  avx512vlbf16intrin.h
   avx512vlbwintrin.h
   avx512vlcdintrin.h
   avx512vldqintrin.h
   avx512vlintrin.h
+  avx512vp2intersectintrin.h
+  avx512vlvp2intersectintrin.h
   avx512vpopcntdqvlintrin.h
   avx512vnniintrin.h
   avx512vlvnniintrin.h
@@ -50,6 +54,7 @@ set(files
   clflushoptintrin.h
   clwbintrin.h
   emmintrin.h
+  enqcmdintrin.h
   f16cintrin.h
   float.h
   fma4intrin.h
@@ -76,6 +81,7 @@ set(files
   mwaitxintrin.h
   nmmintrin.h
   opencl-c.h
+  opencl-c-base.h
   pkuintrin.h
   pmmintrin.h
   pconfigintrin.h
@@ -166,38 +172,69 @@ set(hip_files
 #  hip/hcc_detail/driver_types.h
 #)
 
+set(ppc_wrapper_files
+  ppc_wrappers/mmintrin.h
+  ppc_wrappers/xmmintrin.h
+  ppc_wrappers/mm_malloc.h
+  ppc_wrappers/emmintrin.h
+)
+
+set(openmp_wrapper_files
+  openmp_wrappers/math.h
+  openmp_wrappers/cmath
+  openmp_wrappers/__clang_openmp_math.h
+  openmp_wrappers/__clang_openmp_math_declares.h
+)
+
 set(output_dir ${LLVM_LIBRARY_OUTPUT_INTDIR}/clang/${CLANG_VERSION}/include)
-
-# Generate arm_neon.h
-clang_tablegen(arm_neon.h -gen-arm-neon
-  -I ${CLANG_SOURCE_DIR}/include/clang/Basic/
-  SOURCE ${CLANG_SOURCE_DIR}/include/clang/Basic/arm_neon.td)
-# Generate arm_fp16.h
-clang_tablegen(arm_fp16.h -gen-arm-fp16
-  -I ${CLANG_SOURCE_DIR}/include/clang/Basic/
-  SOURCE ${CLANG_SOURCE_DIR}/include/clang/Basic/arm_fp16.td)
-
 set(out_files)
+
 foreach( f ${files} ${cuda_wrapper_files} ${cuda_open_files} ${hip_files} )
   set( src ${CMAKE_CURRENT_SOURCE_DIR}/${f} )
   set( dst ${output_dir}/${f} )
+endforeach( f )
+
+set(generated_files)
+
+function(copy_header_to_output_dir src_dir file)
+  set(src ${src_dir}/${file})
+  set(dst ${output_dir}/${file})
   add_custom_command(OUTPUT ${dst}
     DEPENDS ${src}
     COMMAND ${CMAKE_COMMAND} -E copy_if_different ${src} ${dst}
-    COMMENT "Copying clang's ${f}...")
+    COMMENT "Copying clang's ${file}...")
   list(APPEND out_files ${dst})
+  set(out_files ${out_files} PARENT_SCOPE)
+endfunction(copy_header_to_output_dir)
+
+function(clang_generate_header td_option td_file out_file)
+  clang_tablegen(${out_file} ${td_option}
+  -I ${CLANG_SOURCE_DIR}/include/clang/Basic/
+  SOURCE ${CLANG_SOURCE_DIR}/include/clang/Basic/${td_file})
+
+  copy_header_to_output_dir(${CMAKE_CURRENT_BINARY_DIR} ${out_file})
+  set(out_files ${out_files} PARENT_SCOPE)
+  list(APPEND generated_files "${CMAKE_CURRENT_BINARY_DIR}/${out_file}")
+  set(generated_files ${generated_files} PARENT_SCOPE)
+endfunction(clang_generate_header)
+
+
+# Copy header files from the source directory to the build directory
+foreach( f ${files} ${cuda_wrapper_files} ${ppc_wrapper_files} ${openmp_wrapper_files})
+  copy_header_to_output_dir(${CMAKE_CURRENT_SOURCE_DIR} ${f})
 endforeach( f )
 
-add_custom_command(OUTPUT ${output_dir}/arm_neon.h
-  DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/arm_neon.h
-  COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_CURRENT_BINARY_DIR}/arm_neon.h ${output_dir}/arm_neon.h
-  COMMENT "Copying clang's arm_neon.h...")
-list(APPEND out_files ${output_dir}/arm_neon.h)
-add_custom_command(OUTPUT ${output_dir}/arm_fp16.h
-  DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/arm_fp16.h
-  COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_CURRENT_BINARY_DIR}/arm_fp16.h ${output_dir}/arm_fp16.h
-  COMMENT "Copying clang's arm_fp16.h...")
-list(APPEND out_files ${output_dir}/arm_fp16.h)
+# TODO schi merge from HCC2 <<<<<<< HEAD
+#add_custom_command(OUTPUT ${output_dir}/arm_neon.h
+#  DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/arm_neon.h
+#  COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_CURRENT_BINARY_DIR}/arm_neon.h ${output_dir}/arm_neon.h
+#  COMMENT "Copying clang's arm_neon.h...")
+#list(APPEND out_files ${output_dir}/arm_neon.h)
+#add_custom_command(OUTPUT ${output_dir}/arm_fp16.h
+#  DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/arm_fp16.h
+#  COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_CURRENT_BINARY_DIR}/arm_fp16.h ${output_dir}/arm_fp16.h
+#  COMMENT "Copying clang's arm_fp16.h...")
+#list(APPEND out_files ${output_dir}/arm_fp16.h)
 
 set(cuda_open_files
   cuda_open/__clang_cuda_open_builtins.h
@@ -241,49 +278,70 @@ set_target_properties(clang-headers PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY "${output_dir}")
 
 install(
-  FILES ${cuda_open_files}
-  COMPONENT clang-headers
-  PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ
-  DESTINATION lib${LLVM_LIBDIR_SUFFIX}/clang/${CLANG_VERSION}/include/cuda_open)
-
-install(
   FILES ${files} ${CMAKE_CURRENT_BINARY_DIR}/arm_neon.h
   COMPONENT clang-headers
   PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ
   DESTINATION lib${LLVM_LIBDIR_SUFFIX}/clang/${CLANG_VERSION}/include)
+#=======
+# Generate header files and copy them to the build directory
+# Generate arm_neon.h
+clang_generate_header(-gen-arm-neon arm_neon.td arm_neon.h)
+# Generate arm_fp16.h
+clang_generate_header(-gen-arm-fp16 arm_fp16.td arm_fp16.h)
+
+add_custom_target(clang-resource-headers ALL DEPENDS ${out_files})
+set_target_properties(clang-resource-headers PROPERTIES
+  FOLDER "Misc"
+  RUNTIME_OUTPUT_DIRECTORY "${output_dir}")
+
+set(header_install_dir lib${LLVM_LIBDIR_SUFFIX}/clang/${CLANG_VERSION}/include)
+# >>>>>>> upstream/master
 
 install(
-  FILES ${files} ${CMAKE_CURRENT_BINARY_DIR}/arm_fp16.h
-  COMPONENT clang-headers
-  PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ
-  DESTINATION lib${LLVM_LIBDIR_SUFFIX}/clang/${CLANG_VERSION}/include)
-
-install(
-  FILES ${cuda_wrapper_files}
-  COMPONENT clang-headers
-  PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ
-  DESTINATION lib${LLVM_LIBDIR_SUFFIX}/clang/${CLANG_VERSION}/include/cuda_wrappers)
-
-install(
-  FILES ${hip_files}
-  COMPONENT clang-headers
-  PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ
-  DESTINATION lib${LLVM_LIBDIR_SUFFIX}/clang/${CLANG_VERSION}/include/hip)
-
-install(
-  FILES ${hip_hcc_files}
-  COMPONENT clang-headers
-  PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ
-  DESTINATION lib${LLVM_LIBDIR_SUFFIX}/clang/${CLANG_VERSION}/include/hip/hcc_detail)
-
-install(
-  FILES ${cuda_open_files}
-  COMPONENT clang-headers
-  PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ
-  DESTINATION lib${LLVM_LIBDIR_SUFFIX}/clang/${CLANG_VERSION}/include/cuda_open)
+  FILES ${files} ${generated_files}
+  DESTINATION ${header_install_dir}
+  COMPONENT clang-resource-headers)
 
 if (NOT CMAKE_CONFIGURATION_TYPES) # don't add this for IDE's.
   add_llvm_install_targets(install-clang-headers
                            DEPENDS clang-headers
                            COMPONENT clang-headers)
+#=======
+install(
+  FILES ${cuda_wrapper_files}
+  DESTINATION ${header_install_dir}/cuda_wrappers
+  COMPONENT clang-resource-headers)
+
+install(
+  FILES ${hip_files}
+  DESTINATION ${header_install_dir}/hip
+  COMPONENT clang-resource-headers)
+
+install(
+  FILES ${hip_hcc_files}
+  DESTINATION ${header_install_dir}/hip/hcc_detail
+  COMPONENT clang-resource-headers)
+
+install(
+  FILES ${cuda_open_files}
+  DESTINATION ${header_install_dir}/cuda_open
+  COMPONENT clang-resource-headers)
+
+
+install(
+  FILES ${ppc_wrapper_files}
+  DESTINATION ${header_install_dir}/ppc_wrappers
+  COMPONENT clang-resource-headers)
+
+install(
+  FILES ${openmp_wrapper_files}
+  DESTINATION ${header_install_dir}/openmp_wrappers
+  COMPONENT clang-resource-headers)
+endif()
+
+if (NOT LLVM_ENABLE_IDE)
+  add_llvm_install_targets(install-clang-resource-headers
+                           DEPENDS clang-resource-headers
+                           COMPONENT clang-resource-headers)
+#>>>>>>> upstream/master
 endif()

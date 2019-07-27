@@ -382,7 +382,7 @@ TEST(ClangToolTest, ArgumentAdjusters) {
   ArgumentsAdjuster CheckSyntaxOnlyAdjuster =
       [&Found, &Ran](const CommandLineArguments &Args, StringRef /*unused*/) {
     Ran = true;
-    if (std::find(Args.begin(), Args.end(), "-fsyntax-only") != Args.end())
+    if (llvm::is_contained(Args, "-fsyntax-only"))
       Found = true;
     return Args;
   };
@@ -398,6 +398,33 @@ TEST(ClangToolTest, ArgumentAdjusters) {
   Tool.run(Action.get());
   EXPECT_TRUE(Ran);
   EXPECT_FALSE(Found);
+}
+
+TEST(ClangToolTest, NoDoubleSyntaxOnly) {
+  FixedCompilationDatabase Compilations("/", {"-fsyntax-only"});
+
+  ClangTool Tool(Compilations, std::vector<std::string>(1, "/a.cc"));
+  Tool.mapVirtualFile("/a.cc", "void a() {}");
+
+  std::unique_ptr<FrontendActionFactory> Action(
+      newFrontendActionFactory<SyntaxOnlyAction>());
+
+  size_t SyntaxOnlyCount = 0;
+  ArgumentsAdjuster CheckSyntaxOnlyAdjuster =
+      [&SyntaxOnlyCount](const CommandLineArguments &Args,
+                         StringRef /*unused*/) {
+        for (llvm::StringRef Arg : Args) {
+          if (Arg == "-fsyntax-only")
+            ++SyntaxOnlyCount;
+        }
+        return Args;
+      };
+
+  Tool.clearArgumentsAdjusters();
+  Tool.appendArgumentsAdjuster(getClangSyntaxOnlyAdjuster());
+  Tool.appendArgumentsAdjuster(CheckSyntaxOnlyAdjuster);
+  Tool.run(Action.get());
+  EXPECT_EQ(SyntaxOnlyCount, 1U);
 }
 
 TEST(ClangToolTest, BaseVirtualFileSystemUsage) {
@@ -440,8 +467,7 @@ TEST(ClangToolTest, StripDependencyFileAdjuster) {
   Tool.run(Action.get());
 
   auto HasFlag = [&FinalArgs](const std::string &Flag) {
-    return std::find(FinalArgs.begin(), FinalArgs.end(), Flag) !=
-           FinalArgs.end();
+    return llvm::find(FinalArgs, Flag) != FinalArgs.end();
   };
   EXPECT_FALSE(HasFlag("-MD"));
   EXPECT_FALSE(HasFlag("-MMD"));
@@ -472,8 +498,7 @@ TEST(ClangToolTest, StripPluginsAdjuster) {
   Tool.run(Action.get());
 
   auto HasFlag = [&FinalArgs](const std::string &Flag) {
-    return std::find(FinalArgs.begin(), FinalArgs.end(), Flag) !=
-           FinalArgs.end();
+    return llvm::find(FinalArgs, Flag) != FinalArgs.end();
   };
   EXPECT_FALSE(HasFlag("-Xclang"));
   EXPECT_FALSE(HasFlag("-add-plugin"));

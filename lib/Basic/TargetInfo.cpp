@@ -373,6 +373,17 @@ void TargetInfo::adjust(LangOptions &Opts) {
     LongDoubleFormat = &llvm::APFloat::IEEEquad();
   }
 
+  if (Opts.LongDoubleSize) {
+    if (Opts.LongDoubleSize == DoubleWidth) {
+      LongDoubleWidth = DoubleWidth;
+      LongDoubleAlign = DoubleAlign;
+      LongDoubleFormat = DoubleFormat;
+    } else if (Opts.LongDoubleSize == 128) {
+      LongDoubleWidth = LongDoubleAlign = 128;
+      LongDoubleFormat = &llvm::APFloat::IEEEquad();
+    }
+  }
+
   if (Opts.NewAlignOverride)
     NewAlign = Opts.NewAlignOverride * getCharWidth();
 
@@ -456,7 +467,7 @@ bool TargetInfo::isValidGCCRegisterName(StringRef Name) const {
   }
 
   // Check register names.
-  if (std::find(Names.begin(), Names.end(), Name) != Names.end())
+  if (llvm::is_contained(Names, Name))
     return true;
 
   // Check any additional names that we have.
@@ -795,4 +806,10 @@ void TargetInfo::CheckFixedPointBits() const {
   assert(getShortAccumIBits() >= getUnsignedShortAccumIBits());
   assert(getAccumIBits() >= getUnsignedAccumIBits());
   assert(getLongAccumIBits() >= getUnsignedLongAccumIBits());
+}
+
+void TargetInfo::copyAuxTarget(const TargetInfo *Aux) {
+  auto *Target = static_cast<TransferrableTargetInfo*>(this);
+  auto *Src = static_cast<const TransferrableTargetInfo*>(Aux);
+  *Target = *Src;
 }

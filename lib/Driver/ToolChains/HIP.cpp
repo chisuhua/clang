@@ -33,7 +33,7 @@ using namespace llvm::opt;
 
 namespace {
 
-static void addBCLib(Compilation &C, const ArgList &Args,
+static void addBCLib(const Driver &D, const ArgList &Args,
                      ArgStringList &CmdArgs, ArgStringList LibraryPaths,
                      StringRef BCName) {
   StringRef FullName;
@@ -42,11 +42,12 @@ static void addBCLib(Compilation &C, const ArgList &Args,
     llvm::sys::path::append(Path, BCName);
     FullName = Path;
     if (llvm::sys::fs::exists(FullName)) {
+      CmdArgs.push_back("-mlink-builtin-bitcode");
       CmdArgs.push_back(Args.MakeArgString(FullName));
       return;
     }
   }
-  C.getDriver().Diag(diag::err_drv_no_such_file) << BCName;
+  D.Diag(diag::err_drv_no_such_file) << BCName;
 }
 
 } // namespace
@@ -86,7 +87,7 @@ const char *AMDGCN::Linker::constructOmpExtraCmds(Compilation &C,
       {Args.MakeArgString("libomptarget-amdgcn-" + SubArchName + ".bc"),
        "cuda2gcn.amdgcn.bc", "hip.amdgcn.bc", "hc.amdgcn.bc"});
   for (auto Lib : BCLibs)
-    addBCLib(C, Args, CmdArgs, LibraryPaths, Lib);
+    addBCLib(C.getDriver(), Args, CmdArgs, LibraryPaths, Lib);
 
   // This will find .a and .bc files that match naming convention.
   AddStaticDeviceLibs(Args, CmdArgs, "amdgcn", SubArchName, C.getDriver(),
@@ -127,6 +128,7 @@ const char *AMDGCN::Linker::constructLLVMLinkCommand(
   } else
     CmdArgs.push_back(Args.MakeArgString(overrideInputsFile));
 
+// TODO schi mege from schi <<<<<<< HEAD
   ArgStringList LibraryPaths;
 
   // Find in --hip-device-lib-path and HIP_LIBRARY_PATH.
@@ -175,8 +177,10 @@ const char *AMDGCN::Linker::constructLLVMLinkCommand(
                    "oclc_unsafe_math_off.amdgcn.bc", ISAVerBC});
   }
   for (auto Lib : BCLibs)
-    addBCLib(C, Args, CmdArgs, LibraryPaths, Lib);
+    addBCLib(C.getDriver(), Args, CmdArgs, LibraryPaths, Lib);
 
+// =======
+// >>>>>>> upstream/master
   // Add an intermediate output file.
   CmdArgs.push_back("-o");
   std::string TmpName =
@@ -221,6 +225,11 @@ const char *AMDGCN::Linker::constructOptCommand(
   }
   OptArgs.push_back("-mtriple=amdgcn-amd-amdhsa");
   OptArgs.push_back(Args.MakeArgString("-mcpu=" + SubArchName));
+
+  for (const Arg *A : Args.filtered(options::OPT_mllvm)) {
+    OptArgs.push_back(A->getValue(0));
+  }
+
   OptArgs.push_back("-o");
   std::string TmpFileName = C.getDriver().GetTemporaryPath(
       OutputFilePrefix.str() + "-optimized", "bc");
@@ -254,9 +263,37 @@ const char *AMDGCN::Linker::constructLlcCommand(
   // AMDGPUPromoteAlloca pass which cause invalid memory access in PyTorch.
   // Remove this once the issue is fixed.
   ArgStringList LlcArgs{InputFileName, "-mtriple=amdgcn-amd-amdhsa",
+/* TODO schi merge HCC2 <<<<<<< HEAD
                         "-filetype=obj", "-mattr=-code-object-v3",
                         "-disable-promote-alloca-to-lds",
                         Args.MakeArgString("-mcpu=" + SubArchName), "-o"};
+=======
+*/
+                        "-filetype=obj",
+                        Args.MakeArgString("-mcpu=" + SubArchName)};
+
+  // Extract all the -m options
+  std::vector<llvm::StringRef> Features;
+  handleTargetFeaturesGroup(
+    Args, Features, options::OPT_m_amdgpu_Features_Group);
+
+  // Add features to mattr such as xnack
+  std::string MAttrString = "-mattr=";
+  for(auto OneFeature : Features) {
+    MAttrString.append(Args.MakeArgString(OneFeature));
+    if (OneFeature != Features.back())
+      MAttrString.append(",");
+  }
+  if(!Features.empty())
+    LlcArgs.push_back(Args.MakeArgString(MAttrString));
+
+  for (const Arg *A : Args.filtered(options::OPT_mllvm)) {
+    LlcArgs.push_back(A->getValue(0));
+  }
+
+  // Add output filename
+  LlcArgs.push_back("-o");
+// >>>>>>> upstream/master
   std::string LlcOutputFileName =
       C.getDriver().GetTemporaryPath(OutputFilePrefix, "o");
   const char *LlcOutputFile =
@@ -276,9 +313,8 @@ void AMDGCN::Linker::constructLldCommand(Compilation &C, const JobAction &JA,
                                           const char *InputFileName) const {
   // Construct lld command.
   // The output from ld.lld is an HSA code object file.
-  ArgStringList LldArgs{"-flavor",    "gnu", "--no-undefined",
-                        "-shared",    "-o",  Output.getFilename(),
-                        InputFileName};
+  ArgStringList LldArgs{
+      "-flavor", "gnu", "-shared", "-o", Output.getFilename(), InputFileName};
   SmallString<128> LldPath(C.getDriver().Dir);
   llvm::sys::path::append(LldPath, "lld");
   const char *Lld = Args.MakeArgString(LldPath);
@@ -407,12 +443,61 @@ void HIPToolChain::addClangTargetOptions(
   // Default to "hidden" visibility, as object level linking will not be
   // supported for the foreseeable future.
   if (!DriverArgs.hasArg(options::OPT_fvisibility_EQ,
-                         options::OPT_fvisibility_ms_compat))
+                         options::OPT_fvisibility_ms_compat)) {
     CC1Args.append({"-fvisibility", "hidden"});
+// TODO schi merge HCC2 <<<<<<< HEAD
 
   /*  if (DeviceOffloadingKind == Action::OFK_OpenMP)
       AddOpenMPDBCLs(DriverArgs, CC1Args, GpuArch, getDriver(), true);
       */
+// =======
+    CC1Args.push_back("-fapply-global-visibility-to-externs");
+  }
+  ArgStringList LibraryPaths;
+
+  // Find in --hip-device-lib-path and HIP_LIBRARY_PATH.
+  for (auto Path :
+       DriverArgs.getAllArgValues(options::OPT_hip_device_lib_path_EQ))
+    LibraryPaths.push_back(DriverArgs.MakeArgString(Path));
+
+  addDirectoryList(DriverArgs, LibraryPaths, "-L", "HIP_DEVICE_LIB_PATH");
+
+  llvm::SmallVector<std::string, 10> BCLibs;
+
+  // Add bitcode library in --hip-device-lib.
+  for (auto Lib : DriverArgs.getAllArgValues(options::OPT_hip_device_lib_EQ)) {
+    BCLibs.push_back(DriverArgs.MakeArgString(Lib));
+  }
+
+  // If --hip-device-lib is not set, add the default bitcode libraries.
+  if (BCLibs.empty()) {
+    // Get the bc lib file name for ISA version. For example,
+    // gfx803 => oclc_isa_version_803.amdgcn.bc.
+    std::string GFXVersion = GpuArch.drop_front(3).str();
+    std::string ISAVerBC = "oclc_isa_version_" + GFXVersion + ".amdgcn.bc";
+
+    llvm::StringRef FlushDenormalControlBC;
+    if (DriverArgs.hasArg(options::OPT_fcuda_flush_denormals_to_zero))
+      FlushDenormalControlBC = "oclc_daz_opt_on.amdgcn.bc";
+    else
+      FlushDenormalControlBC = "oclc_daz_opt_off.amdgcn.bc";
+
+    llvm::StringRef WaveFrontSizeBC;
+    if (stoi(GFXVersion) < 1000)
+      WaveFrontSizeBC = "oclc_wavefrontsize64_on.amdgcn.bc";
+    else
+      WaveFrontSizeBC = "oclc_wavefrontsize64_off.amdgcn.bc";
+
+    BCLibs.append({"hip.amdgcn.bc", "opencl.amdgcn.bc", "ocml.amdgcn.bc",
+                   "ockl.amdgcn.bc", "oclc_finite_only_off.amdgcn.bc",
+                   FlushDenormalControlBC,
+                   "oclc_correctly_rounded_sqrt_on.amdgcn.bc",
+                   "oclc_unsafe_math_off.amdgcn.bc", ISAVerBC,
+                   WaveFrontSizeBC});
+  }
+  for (auto Lib : BCLibs)
+    addBCLib(getDriver(), DriverArgs, CC1Args, LibraryPaths, Lib);
+// >>>>>>> upstream/master
 }
 
 

@@ -272,6 +272,9 @@ public:
   /// Track sublcasses of OSObject.
   bool TrackOSObjects = false;
 
+  /// Track initial parameters (for the entry point) for NS/CF objects.
+  bool TrackNSCFStartParam = false;
+
   RetainCountChecker() {};
 
   RetainSummaryManager &getSummaryManager(ASTContext &Ctx) const {
@@ -307,7 +310,7 @@ public:
                                const CallEvent &Call,
                                CheckerContext &C) const;
 
-  bool evalCall(const CallExpr *CE, CheckerContext &C) const;
+  bool evalCall(const CallEvent &Call, CheckerContext &C) const;
 
   ProgramStateRef evalAssume(ProgramStateRef state, SVal Cond,
                                  bool Assumption) const;
