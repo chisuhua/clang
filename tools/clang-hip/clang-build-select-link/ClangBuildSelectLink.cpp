@@ -354,7 +354,7 @@ int main(int argc, char **argv) {
 
   cl::ParseCommandLineOptions(argc, argv, "clang-build-select-link\n");
 
-  auto Composite = make_unique<Module>("clang-build-select-link", Context);
+  auto Composite = std::make_unique<Module>("clang-build-select-link", Context);
   Linker L(*Composite);
 
   // unsigned Flags = Linker::Flags::LinkOnlyNeeded;

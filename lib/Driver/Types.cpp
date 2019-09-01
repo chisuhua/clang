@@ -7,9 +7,13 @@
 //===----------------------------------------------------------------------===//
 
 #include "clang/Driver/Types.h"
+#include "clang/Driver/Driver.h"
+#include "clang/Driver/DriverDiagnostic.h"
+#include "clang/Driver/Options.h"
 #include "llvm/ADT/STLExtras.h"
-#include "llvm/ADT/StringSwitch.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringSwitch.h"
+#include "llvm/Option/Arg.h"
 #include <cassert>
 #include <cstring>
 
@@ -18,15 +22,14 @@ using namespace clang::driver::types;
 
 struct TypeInfo {
   const char *Name;
-  const char *Flags;
   const char *TempSuffix;
   ID PreprocessedType;
   const llvm::SmallVector<phases::ID, phases::MaxNumberOfPhases> Phases;
 };
 
 static const TypeInfo TypeInfos[] = {
-#define TYPE(NAME, ID, PP_TYPE, TEMP_SUFFIX, FLAGS, ...) \
-  { NAME, FLAGS, TEMP_SUFFIX, TY_##PP_TYPE, { __VA_ARGS__ }, },
+#define TYPE(NAME, ID, PP_TYPE, TEMP_SUFFIX, ...) \
+  { NAME, TEMP_SUFFIX, TY_##PP_TYPE, { __VA_ARGS__ }, },
 #include "clang/Driver/Types.def"
 #undef TYPE
 };
@@ -90,7 +93,15 @@ bool types::onlyPrecompileType(ID Id) {
 }
 
 bool types::canTypeBeUserSpecified(ID Id) {
-  return strchr(getInfo(Id).Flags, 'u');
+  static const clang::driver::types::ID kStaticLangageTypes[] = {
+      TY_CUDA_DEVICE,   TY_HIP_DEVICE,    TY_PP_CHeader,
+      TY_PP_ObjCHeader, TY_PP_CXXHeader,  TY_PP_ObjCXXHeader,
+      TY_PP_CXXModule,  TY_LTO_IR,        TY_LTO_BC,
+      TY_Plist,         TY_RewrittenObjC, TY_RewrittenLegacyObjC,
+      TY_Remap,         TY_PCH,           TY_Object,
+      TY_Image,         TY_dSYM,          TY_Dependencies,
+      TY_CUDA_FATBIN,   TY_HIP_FATBIN};
+  return !llvm::is_contained(kStaticLangageTypes, Id);
 }
 
 bool types::appendSuffixForType(ID Id) {
@@ -284,6 +295,56 @@ void types::getCompilationPhases(ID Id, llvm::SmallVectorImpl<phases::ID> &P) {
   P = getInfo(Id).Phases;
   assert(0 < P.size() && "Not enough phases in list");
   assert(P.size() <= phases::MaxNumberOfPhases && "Too many phases in list");
+}
+
+void types::getCompilationPhases(const clang::driver::Driver &Driver,
+                                 llvm::opt::DerivedArgList &DAL, ID Id,
+                                 llvm::SmallVectorImpl<phases::ID> &P) {
+  llvm::SmallVector<phases::ID, phases::MaxNumberOfPhases> PhaseList;
+  types::getCompilationPhases(Id, PhaseList);
+
+  // Filter to compiler mode. When the compiler is run as a preprocessor then
+  // compilation is not an option.
+  // -S runs the compiler in Assembly listing mode.
+  if (Driver.CCCIsCPP() || DAL.getLastArg(options::OPT_E) ||
+      DAL.getLastArg(options::OPT__SLASH_EP) ||
+      DAL.getLastArg(options::OPT_M, options::OPT_MM) ||
+      DAL.getLastArg(options::OPT__SLASH_P))
+    llvm::copy_if(PhaseList, std::back_inserter(P),
+                  [](phases::ID Phase) { return Phase <= phases::Preprocess; });
+
+  // --precompile only runs up to precompilation.
+  // This is a clang extension and is not compatible with GCC.
+  else if (DAL.getLastArg(options::OPT__precompile))
+    llvm::copy_if(PhaseList, std::back_inserter(P),
+                  [](phases::ID Phase) { return Phase <= phases::Precompile; });
+
+  // -{fsyntax-only,-analyze,emit-ast} only run up to the compiler.
+  else if (DAL.getLastArg(options::OPT_fsyntax_only) ||
+           DAL.getLastArg(options::OPT_print_supported_cpus) ||
+           DAL.getLastArg(options::OPT_module_file_info) ||
+           DAL.getLastArg(options::OPT_verify_pch) ||
+           DAL.getLastArg(options::OPT_rewrite_objc) ||
+           DAL.getLastArg(options::OPT_rewrite_legacy_objc) ||
+           DAL.getLastArg(options::OPT__migrate) ||
+           DAL.getLastArg(options::OPT_emit_iterface_stubs) ||
+           DAL.getLastArg(options::OPT__analyze, options::OPT__analyze_auto) ||
+           DAL.getLastArg(options::OPT_emit_ast))
+    llvm::copy_if(PhaseList, std::back_inserter(P),
+                  [](phases::ID Phase) { return Phase <= phases::Compile; });
+
+  else if (DAL.getLastArg(options::OPT_S) ||
+           DAL.getLastArg(options::OPT_emit_llvm))
+    llvm::copy_if(PhaseList, std::back_inserter(P),
+                  [](phases::ID Phase) { return Phase <= phases::Backend; });
+
+  else if (DAL.getLastArg(options::OPT_c))
+    llvm::copy_if(PhaseList, std::back_inserter(P),
+                  [](phases::ID Phase) { return Phase <= phases::Assemble; });
+
+  // Generally means, do every phase until Link.
+  else
+    P = PhaseList;
 }
 
 ID types::lookupCXXTypeForCType(ID Id) {
