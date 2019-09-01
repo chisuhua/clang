@@ -1290,14 +1290,14 @@ static QualType ConvertDeclSpecToType(TypeProcessingState &state) {
     if (DS.getTypeSpecSign() == DeclSpec::TSS_unspecified)
       Result = Context.WCharTy;
     else if (DS.getTypeSpecSign() == DeclSpec::TSS_signed) {
-      S.Diag(DS.getTypeSpecSignLoc(), diag::ext_invalid_sign_spec)
+      S.Diag(DS.getTypeSpecSignLoc(), diag::ext_wchar_t_sign_spec)
         << DS.getSpecifierName(DS.getTypeSpecType(),
                                Context.getPrintingPolicy());
       Result = Context.getSignedWCharType();
     } else {
       assert(DS.getTypeSpecSign() == DeclSpec::TSS_unsigned &&
         "Unknown TSS value");
-      S.Diag(DS.getTypeSpecSignLoc(), diag::ext_invalid_sign_spec)
+      S.Diag(DS.getTypeSpecSignLoc(), diag::ext_wchar_t_sign_spec)
         << DS.getSpecifierName(DS.getTypeSpecType(),
                                Context.getPrintingPolicy());
       Result = Context.getUnsignedWCharType();
@@ -2455,11 +2455,6 @@ bool Sema::CheckFunctionReturnType(QualType T, SourceLocation Loc) {
         << 0 << T << FixItHint::CreateInsertion(Loc, "*");
     return true;
   }
-
-  if (T.hasNonTrivialToPrimitiveDestructCUnion() ||
-      T.hasNonTrivialToPrimitiveCopyCUnion())
-    checkNonTrivialCUnion(T, Loc, NTCUC_FunctionReturn,
-                          NTCUK_Destruct|NTCUK_Copy);
 
   return false;
 }
@@ -5983,9 +5978,9 @@ static void HandleAddressSpaceTypeAttribute(QualType &Type,
     }
 
     ASTContext &Ctx = S.Context;
-    auto *ASAttr = ::new (Ctx) AddressSpaceAttr(
-        Attr.getRange(), Ctx, Attr.getAttributeSpellingListIndex(),
-        static_cast<unsigned>(ASIdx));
+    auto *ASAttr = ::new (Ctx)
+        AddressSpaceAttr(Attr.getRange(), Ctx, static_cast<unsigned>(ASIdx),
+                         Attr.getAttributeSpellingListIndex());
 
     // If the expression is not value dependent (not templated), then we can
     // apply the address space qualifiers just to the equivalent type.
@@ -7390,8 +7385,22 @@ static void deduceOpenCLImplicitAddrSpace(TypeProcessingState &State,
   bool IsPointee =
       ChunkIndex > 0 &&
       (D.getTypeObject(ChunkIndex - 1).Kind == DeclaratorChunk::Pointer ||
-       D.getTypeObject(ChunkIndex - 1).Kind == DeclaratorChunk::BlockPointer ||
-       D.getTypeObject(ChunkIndex - 1).Kind == DeclaratorChunk::Reference);
+       D.getTypeObject(ChunkIndex - 1).Kind == DeclaratorChunk::Reference ||
+       D.getTypeObject(ChunkIndex - 1).Kind == DeclaratorChunk::BlockPointer);
+  // For pointers/references to arrays the next chunk is always an array
+  // followed by any number of parentheses.
+  if (!IsPointee && ChunkIndex > 1) {
+    auto AdjustedCI = ChunkIndex - 1;
+    if (D.getTypeObject(AdjustedCI).Kind == DeclaratorChunk::Array)
+      AdjustedCI--;
+    // Skip over all parentheses.
+    while (AdjustedCI > 0 &&
+           D.getTypeObject(AdjustedCI).Kind == DeclaratorChunk::Paren)
+      AdjustedCI--;
+    if (D.getTypeObject(AdjustedCI).Kind == DeclaratorChunk::Pointer ||
+        D.getTypeObject(AdjustedCI).Kind == DeclaratorChunk::Reference)
+      IsPointee = true;
+  }
   bool IsFuncReturnType =
       ChunkIndex > 0 &&
       D.getTypeObject(ChunkIndex - 1).Kind == DeclaratorChunk::Function;
@@ -7720,7 +7729,9 @@ void Sema::completeExprArrayBound(Expr *E) {
         auto *Def = Var->getDefinition();
         if (!Def) {
           SourceLocation PointOfInstantiation = E->getExprLoc();
-          InstantiateVariableDefinition(PointOfInstantiation, Var);
+          runWithSufficientStackSpace(PointOfInstantiation, [&] {
+            InstantiateVariableDefinition(PointOfInstantiation, Var);
+          });
           Def = Var->getDefinition();
 
           // If we don't already have a point of instantiation, and we managed
@@ -8058,9 +8069,11 @@ bool Sema::RequireCompleteTypeImpl(SourceLocation Loc, QualType T,
     } else if (auto *ClassTemplateSpec =
             dyn_cast<ClassTemplateSpecializationDecl>(RD)) {
       if (ClassTemplateSpec->getSpecializationKind() == TSK_Undeclared) {
-        Diagnosed = InstantiateClassTemplateSpecialization(
-            Loc, ClassTemplateSpec, TSK_ImplicitInstantiation,
-            /*Complain=*/Diagnoser);
+        runWithSufficientStackSpace(Loc, [&] {
+          Diagnosed = InstantiateClassTemplateSpecialization(
+              Loc, ClassTemplateSpec, TSK_ImplicitInstantiation,
+              /*Complain=*/Diagnoser);
+        });
         Instantiated = true;
       }
     } else {
@@ -8071,10 +8084,12 @@ bool Sema::RequireCompleteTypeImpl(SourceLocation Loc, QualType T,
         // This record was instantiated from a class within a template.
         if (MSI->getTemplateSpecializationKind() !=
             TSK_ExplicitSpecialization) {
-          Diagnosed = InstantiateClass(Loc, RD, Pattern,
-                                       getTemplateInstantiationArgs(RD),
-                                       TSK_ImplicitInstantiation,
-                                       /*Complain=*/Diagnoser);
+          runWithSufficientStackSpace(Loc, [&] {
+            Diagnosed = InstantiateClass(Loc, RD, Pattern,
+                                         getTemplateInstantiationArgs(RD),
+                                         TSK_ImplicitInstantiation,
+                                         /*Complain=*/Diagnoser);
+          });
           Instantiated = true;
         }
       }

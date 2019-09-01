@@ -66,6 +66,10 @@ void JSONNodeDumper::Visit(const Stmt *S) {
 
 void JSONNodeDumper::Visit(const Type *T) {
   JOS.attribute("id", createPointerRepresentation(T));
+
+  if (!T)
+    return;
+
   JOS.attribute("kind", (llvm::Twine(T->getTypeClassName()) + "Type").str());
   JOS.attribute("type", createQualType(QualType(T, 0), /*Desugar*/ false));
   attributeOnlyIfTrue("isDependent", T->isDependentType());
@@ -238,6 +242,8 @@ llvm::json::Object JSONNodeDumper::createQualType(QualType QT, bool Desugar) {
     SplitQualType DSQT = QT.getSplitDesugaredType();
     if (DSQT != SQT)
       Ret["desugaredQualType"] = QualType::getAsString(DSQT, PrintPolicy);
+    if (const auto *TT = QT->getAs<TypedefType>())
+      Ret["typeAliasDeclId"] = createPointerRepresentation(TT->getDecl());
   }
   return Ret;
 }

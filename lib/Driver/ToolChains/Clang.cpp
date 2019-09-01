@@ -580,16 +580,27 @@ static bool useFramePointerForTargetByDefault(const ArgList &Args,
 
 static CodeGenOptions::FramePointerKind
 getFramePointerKind(const ArgList &Args, const llvm::Triple &Triple) {
+  // We have 4 states:
+  //
+  //  00) leaf retained, non-leaf retained
+  //  01) leaf retained, non-leaf omitted (this is invalid)
+  //  10) leaf omitted, non-leaf retained
+  //      (what -momit-leaf-frame-pointer was designed for)
+  //  11) leaf omitted, non-leaf omitted
+  //
+  //  "omit" options taking precedence over "no-omit" options is the only way
+  //  to make 3 valid states representable
   Arg *A = Args.getLastArg(options::OPT_fomit_frame_pointer,
                            options::OPT_fno_omit_frame_pointer);
   bool OmitFP = A && A->getOption().matches(options::OPT_fomit_frame_pointer);
   bool NoOmitFP =
       A && A->getOption().matches(options::OPT_fno_omit_frame_pointer);
+  bool KeepLeaf =
+      Args.hasFlag(options::OPT_momit_leaf_frame_pointer,
+                   options::OPT_mno_omit_leaf_frame_pointer, Triple.isPS4CPU());
   if (NoOmitFP || mustUseNonLeafFramePointerForTarget(Triple) ||
       (!OmitFP && useFramePointerForTargetByDefault(Args, Triple))) {
-    if (Args.hasFlag(options::OPT_momit_leaf_frame_pointer,
-                     options::OPT_mno_omit_leaf_frame_pointer,
-                     Triple.isPS4CPU()))
+    if (KeepLeaf)
       return CodeGenOptions::FramePointerKind::NonLeaf;
     return CodeGenOptions::FramePointerKind::All;
   }
@@ -1235,6 +1246,9 @@ void Clang::AddPreprocessingOptions(Compilation &C, const JobAction &JA,
       // Do not claim the argument so that the use of the argument does not
       // silently go unnoticed on toolchains which do not honour the option.
       continue;
+    } else if (A->getOption().matches(options::OPT_stdlibxx_isystem)) {
+      // Translated to -internal-isystem by the driver, no need to pass to cc1.
+      continue;
     }
 
     // Not translated, render as usual.
@@ -1289,11 +1303,15 @@ void Clang::AddPreprocessingOptions(Compilation &C, const JobAction &JA,
   // of an offloading programming model.
 
   // Add C++ include arguments, if needed.
-  if (types::isCXX(Inputs[0].getType()))
-    forAllAssociatedToolChains(C, JA, getToolChain(),
-                               [&Args, &CmdArgs](const ToolChain &TC) {
-                                 TC.AddClangCXXStdlibIncludeArgs(Args, CmdArgs);
-                               });
+  if (types::isCXX(Inputs[0].getType())) {
+    bool HasStdlibxxIsystem = Args.hasArg(options::OPT_stdlibxx_isystem);
+    forAllAssociatedToolChains(
+        C, JA, getToolChain(),
+        [&Args, &CmdArgs, HasStdlibxxIsystem](const ToolChain &TC) {
+          HasStdlibxxIsystem ? TC.AddClangCXXStdlibIsystemArgs(Args, CmdArgs)
+                             : TC.AddClangCXXStdlibIncludeArgs(Args, CmdArgs);
+        });
+  }
 
   // Add system include arguments for all targets but IAMCU.
   if (!IsIAMCU)
@@ -1841,21 +1859,11 @@ void Clang::AddPPCTargetArgs(const ArgList &Args,
 
 void Clang::AddRISCVTargetArgs(const ArgList &Args,
                                ArgStringList &CmdArgs) const {
-  // FIXME: currently defaults to the soft-float ABIs. Will need to be
-  // expanded to select ilp32f, ilp32d, lp64f, lp64d when appropriate.
-  const char *ABIName = nullptr;
   const llvm::Triple &Triple = getToolChain().getTriple();
-  if (Arg *A = Args.getLastArg(options::OPT_mabi_EQ))
-    ABIName = A->getValue();
-  else if (Triple.getArch() == llvm::Triple::riscv32)
-    ABIName = "ilp32";
-  else if (Triple.getArch() == llvm::Triple::riscv64)
-    ABIName = "lp64";
-  else
-    llvm_unreachable("Unexpected triple!");
+  StringRef ABIName = riscv::getRISCVABI(Args, Triple);
 
   CmdArgs.push_back("-target-abi");
-  CmdArgs.push_back(ABIName);
+  CmdArgs.push_back(ABIName.data());
 }
 
 void Clang::AddSparcTargetArgs(const ArgList &Args,
@@ -1995,7 +2003,8 @@ void Clang::DumpCompilationDatabase(Compilation &C, StringRef Filename,
 
   if (!CompilationDatabase) {
     std::error_code EC;
-    auto File = llvm::make_unique<llvm::raw_fd_ostream>(Filename, EC, llvm::sys::fs::F_Text);
+    auto File = std::make_unique<llvm::raw_fd_ostream>(Filename, EC,
+                                                        llvm::sys::fs::OF_Text);
     if (EC) {
       D.Diag(clang::diag::err_drv_compilationdatabase) << Filename
                                                        << EC.message();
@@ -2004,13 +2013,14 @@ void Clang::DumpCompilationDatabase(Compilation &C, StringRef Filename,
     CompilationDatabase = std::move(File);
   }
   auto &CDB = *CompilationDatabase;
-  SmallString<128> Buf;
-  if (llvm::sys::fs::current_path(Buf))
-    Buf = ".";
-  CDB << "{ \"directory\": \"" << escape(Buf) << "\"";
+  auto CWD = D.getVFS().getCurrentWorkingDirectory();
+  if (!CWD)
+    CWD = ".";
+  CDB << "{ \"directory\": \"" << escape(*CWD) << "\"";
   CDB << ", \"file\": \"" << escape(Input.getFilename()) << "\"";
   CDB << ", \"output\": \"" << escape(Output.getFilename()) << "\"";
   CDB << ", \"arguments\": [\"" << escape(D.ClangExecutable) << "\"";
+  SmallString<128> Buf;
   Buf = "-x";
   Buf += types::getTypeName(Input.getType());
   CDB << ", \"" << escape(Buf) << "\"";
@@ -2028,6 +2038,8 @@ void Clang::DumpCompilationDatabase(Compilation &C, StringRef Filename,
     // Skip writing dependency output and the compilation database itself.
     if (O.getGroup().isValid() && O.getGroup().getID() == options::OPT_M_Group)
       continue;
+    if (O.getID() == options::OPT_gen_cdb_fragment_path)
+      continue;
     // Skip inputs.
     if (O.getKind() == Option::InputClass)
       continue;
@@ -2040,6 +2052,40 @@ void Clang::DumpCompilationDatabase(Compilation &C, StringRef Filename,
   Buf = "--target=";
   Buf += Target;
   CDB << ", \"" << escape(Buf) << "\"]},\n";
+}
+
+void Clang::DumpCompilationDatabaseFragmentToDir(
+    StringRef Dir, Compilation &C, StringRef Target, const InputInfo &Output,
+    const InputInfo &Input, const llvm::opt::ArgList &Args) const {
+  // If this is a dry run, do not create the compilation database file.
+  if (C.getArgs().hasArg(options::OPT__HASH_HASH_HASH))
+    return;
+
+  if (CompilationDatabase)
+    DumpCompilationDatabase(C, "", Target, Output, Input, Args);
+
+  SmallString<256> Path = Dir;
+  const auto &Driver = C.getDriver();
+  Driver.getVFS().makeAbsolute(Path);
+  auto Err = llvm::sys::fs::create_directory(Path, /*IgnoreExisting=*/true);
+  if (Err) {
+    Driver.Diag(diag::err_drv_compilationdatabase) << Dir << Err.message();
+    return;
+  }
+
+  llvm::sys::path::append(
+      Path,
+      Twine(llvm::sys::path::filename(Input.getFilename())) + ".%%%%.json");
+  int FD;
+  SmallString<256> TempPath;
+  Err = llvm::sys::fs::createUniqueFile(Path, FD, TempPath);
+  if (Err) {
+    Driver.Diag(diag::err_drv_compilationdatabase) << Path << Err.message();
+    return;
+  }
+  CompilationDatabase =
+      std::make_unique<llvm::raw_fd_ostream>(FD, /*shouldClose=*/true);
+  DumpCompilationDatabase(C, "", Target, Output, Input, Args);
 }
 
 static void CollectArgsForIntegratedAssembler(Compilation &C,
@@ -2171,6 +2217,8 @@ static void CollectArgsForIntegratedAssembler(Compilation &C,
         CmdArgs.push_back("-msave-temp-labels");
       } else if (Value == "--fatal-warnings") {
         CmdArgs.push_back("-massembler-fatal-warnings");
+      } else if (Value == "--no-warn") {
+        CmdArgs.push_back("-massembler-no-warn");
       } else if (Value == "--noexecstack") {
         UseNoExecStack = true;
       } else if (Value.startswith("-compress-debug-sections") ||
@@ -3488,6 +3536,11 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   if (const Arg *MJ = Args.getLastArg(options::OPT_MJ)) {
     DumpCompilationDatabase(C, MJ->getValue(), TripleStr, Output, Input, Args);
     Args.ClaimAllArgs(options::OPT_MJ);
+  } else if (const Arg *GenCDBFragment =
+                 Args.getLastArg(options::OPT_gen_cdb_fragment_path)) {
+    DumpCompilationDatabaseFragmentToDir(GenCDBFragment->getValue(), C,
+                                         TripleStr, Output, Input, Args);
+    Args.ClaimAllArgs(options::OPT_gen_cdb_fragment_path);
   }
 
   if (IsCuda || IsHIP) {
@@ -3554,6 +3607,36 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   // Select the appropriate action.
   RewriteKind rewriteKind = RK_None;
 
+  // If CollectArgsForIntegratedAssembler() isn't called below, claim the args
+  // it claims when not running an assembler. Otherwise, clang would emit
+  // "argument unused" warnings for assembler flags when e.g. adding "-E" to
+  // flags while debugging something. That'd be somewhat inconvenient, and it's
+  // also inconsistent with most other flags -- we don't warn on
+  // -ffunction-sections not being used in -E mode either for example, even
+  // though it's not really used either.
+  if (!isa<AssembleJobAction>(JA)) {
+    // The args claimed here should match the args used in
+    // CollectArgsForIntegratedAssembler().
+    if (TC.useIntegratedAs()) {
+      Args.ClaimAllArgs(options::OPT_mrelax_all);
+      Args.ClaimAllArgs(options::OPT_mno_relax_all);
+      Args.ClaimAllArgs(options::OPT_mincremental_linker_compatible);
+      Args.ClaimAllArgs(options::OPT_mno_incremental_linker_compatible);
+      switch (C.getDefaultToolChain().getArch()) {
+      case llvm::Triple::arm:
+      case llvm::Triple::armeb:
+      case llvm::Triple::thumb:
+      case llvm::Triple::thumbeb:
+        Args.ClaimAllArgs(options::OPT_mimplicit_it_EQ);
+        break;
+      default:
+        break;
+      }
+    }
+    Args.ClaimAllArgs(options::OPT_Wa_COMMA);
+    Args.ClaimAllArgs(options::OPT_Xassembler);
+  }
+
   if (isa<AnalyzeJobAction>(JA)) {
     assert(JA.getType() == types::TY_Plist && "Invalid output type.");
     CmdArgs.push_back("-analyze");
@@ -3598,20 +3681,27 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
                JA.getType() == types::TY_LTO_BC) {
       CmdArgs.push_back("-emit-llvm-bc");
     } else if (JA.getType() == types::TY_IFS) {
+      StringRef ArgStr =
+          Args.hasArg(options::OPT_iterface_stub_version_EQ)
+              ? Args.getLastArgValue(options::OPT_iterface_stub_version_EQ)
+              : "";
       StringRef StubFormat =
-          llvm::StringSwitch<StringRef>(
-              Args.hasArg(options::OPT_iterface_stub_version_EQ)
-                  ? Args.getLastArgValue(options::OPT_iterface_stub_version_EQ)
-                  : "")
-              .Case("experimental-yaml-elf-v1", "experimental-yaml-elf-v1")
-              .Case("experimental-tapi-elf-v1", "experimental-tapi-elf-v1")
+          llvm::StringSwitch<StringRef>(ArgStr)
+              .Case("experimental-ifs-v1", "experimental-ifs-v1")
               .Default("");
 
-      if (StubFormat.empty())
+      if (StubFormat.empty()) {
+        std::string ErrorMessage =
+            "Invalid interface stub format: " + ArgStr.str() +
+            ((ArgStr == "experimental-yaml-elf-v1" ||
+              ArgStr == "experimental-tapi-elf-v1")
+                 ? " is deprecated."
+                 : ".");
         D.Diag(diag::err_drv_invalid_value)
-            << "Must specify a valid interface stub format type using "
-            << "-interface-stub-version=<experimental-tapi-elf-v1 | "
-               "experimental-yaml-elf-v1>";
+            << "Must specify a valid interface stub format type, ie: "
+               "-interface-stub-version=experimental-ifs-v1"
+            << ErrorMessage;
+      }
 
       CmdArgs.push_back("-emit-interface-stubs");
       CmdArgs.push_back(
@@ -3771,7 +3861,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
         II.getInputArg().renderAsInput(Args, CmdArgs);
     }
 
-    C.addCommand(llvm::make_unique<Command>(JA, *this, D.getClangProgramPath(),
+    C.addCommand(std::make_unique<Command>(JA, *this, D.getClangProgramPath(),
                                             CmdArgs, Inputs));
     return;
   }
@@ -4024,11 +4114,12 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
 
   RenderFloatingPointOptions(TC, D, OFastEnabled, Args, CmdArgs);
 
-  if (Arg *A = Args.getLastArg(options::OPT_mlong_double_64,
-                               options::OPT_mlong_double_128)) {
+  if (Arg *A = Args.getLastArg(options::OPT_LongDouble_Group)) {
     if (TC.getArch() == llvm::Triple::x86 ||
-        TC.getArch() == llvm::Triple::x86_64 ||
-        TC.getArch() == llvm::Triple::ppc || TC.getTriple().isPPC64())
+        TC.getArch() == llvm::Triple::x86_64)
+      A->render(Args, CmdArgs);
+    else if ((TC.getArch() == llvm::Triple::ppc || TC.getTriple().isPPC64()) &&
+             (A->getOption().getID() != options::OPT_mlong_double_80))
       A->render(Args, CmdArgs);
     else
       D.Diag(diag::err_drv_unsupported_opt_for_target)
@@ -4039,8 +4130,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   // toolchains which have the integrated assembler on by default.
   bool IsIntegratedAssemblerDefault = TC.IsIntegratedAssemblerDefault();
   if (Args.hasFlag(options::OPT_fverbose_asm, options::OPT_fno_verbose_asm,
-                   IsIntegratedAssemblerDefault) ||
-      Args.hasArg(options::OPT_dA))
+                   IsIntegratedAssemblerDefault))
     CmdArgs.push_back("-masm-verbose");
 
   if (!TC.useIntegratedAs())
@@ -5531,16 +5621,16 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
       (InputType == types::TY_C || InputType == types::TY_CXX)) {
     auto CLCommand =
         getCLFallback()->GetCommand(C, JA, Output, Inputs, Args, LinkingOutput);
-    C.addCommand(llvm::make_unique<FallbackCommand>(
+    C.addCommand(std::make_unique<FallbackCommand>(
         JA, *this, Exec, CmdArgs, Inputs, std::move(CLCommand)));
   } else if (Args.hasArg(options::OPT__SLASH_fallback) &&
              isa<PrecompileJobAction>(JA)) {
     // In /fallback builds, run the main compilation even if the pch generation
     // fails, so that the main compilation's fallback to cl.exe runs.
-    C.addCommand(llvm::make_unique<ForceSuccessCommand>(JA, *this, Exec,
+    C.addCommand(std::make_unique<ForceSuccessCommand>(JA, *this, Exec,
                                                         CmdArgs, Inputs));
   } else {
-    C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs));
+    C.addCommand(std::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs));
   }
 
   // Make the compile command echo its inputs for /showFilenames.
@@ -6267,7 +6357,7 @@ void ClangAs::ConstructJob(Compilation &C, const JobAction &JA,
   CmdArgs.push_back(Input.getFilename());
 
   const char *Exec = getToolChain().getDriver().getClangProgramPath();
-  C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs));
+  C.addCommand(std::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs));
 }
 
 // Begin OffloadBundler
@@ -6350,7 +6440,7 @@ void OffloadBundler::ConstructJob(Compilation &C, const JobAction &JA,
   CmdArgs.push_back(TCArgs.MakeArgString(UB));
 
   // All the inputs are encoded as commands.
-  C.addCommand(llvm::make_unique<Command>(
+  C.addCommand(std::make_unique<Command>(
       JA, *this,
       TCArgs.MakeArgString(getToolChain().GetProgramPath(getShortName())),
       CmdArgs, None));
@@ -6416,7 +6506,7 @@ void OffloadBundler::ConstructJobMultipleOutputs(
   CmdArgs.push_back("-unbundle");
 
   // All the inputs are encoded as commands.
-  C.addCommand(llvm::make_unique<Command>(
+  C.addCommand(std::make_unique<Command>(
       JA, *this,
       TCArgs.MakeArgString(getToolChain().GetProgramPath(getShortName())),
       CmdArgs, None));

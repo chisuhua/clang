@@ -10,14 +10,12 @@
 #include "CommonArgs.h"
 #include "InputInfo.h"
 #include "clang/Basic/Cuda.h"
-#include "clang/Config/config.h"
 #include "clang/Driver/Compilation.h"
 #include "clang/Driver/Driver.h"
 #include "clang/Driver/DriverDiagnostic.h"
 #include "clang/Driver/Options.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Path.h"
-#include "llvm/Support/Process.h"
 
 using namespace clang::driver;
 using namespace clang::driver::toolchains;
@@ -25,7 +23,7 @@ using namespace clang::driver::tools;
 using namespace clang;
 using namespace llvm::opt;
 
-#if _WIN32 || _WIN64
+#if defined(_WIN32) || defined(_WIN64)
 #define NULL_FILE "nul"
 #else
 #define NULL_FILE "/dev/null"
@@ -96,7 +94,7 @@ const char *AMDGCN::Linker::constructOmpExtraCmds(Compilation &C,
 
   CmdArgs.push_back("-o");
   CmdArgs.push_back(OutputFileName);
-  C.addCommand(llvm::make_unique<Command>(
+  C.addCommand(std::make_unique<Command>(
       JA, *this,
       Args.MakeArgString(C.getDriver().Dir + "/clang-build-select-link"),
       CmdArgs, Inputs));
@@ -107,7 +105,7 @@ const char *AMDGCN::Linker::constructOmpExtraCmds(Compilation &C,
   ArgStringList cpArgs;
   cpArgs.push_back(OutputFileName);
   cpArgs.push_back("/tmp/select_out.bc");
-  C.addCommand(llvm::make_unique<Command>(
+  C.addCommand(std::make_unique<Command>(
       JA, *this, Args.MakeArgString("/bin/cp"), cpArgs, Inputs));
   }
 #endif
@@ -191,7 +189,7 @@ const char *AMDGCN::Linker::constructLLVMLinkCommand(
   SmallString<128> ExecPath(C.getDriver().Dir);
   llvm::sys::path::append(ExecPath, "llvm-link");
   const char *Exec = Args.MakeArgString(ExecPath);
-  C.addCommand(llvm::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs));
+  C.addCommand(std::make_unique<Command>(JA, *this, Exec, CmdArgs, Inputs));
   return OutputFileName;
 }
 
@@ -239,17 +237,7 @@ const char *AMDGCN::Linker::constructOptCommand(
   SmallString<128> OptPath(C.getDriver().Dir);
   llvm::sys::path::append(OptPath, "opt");
   const char *OptExec = Args.MakeArgString(OptPath);
-  C.addCommand(llvm::make_unique<Command>(JA, *this, OptExec, OptArgs, Inputs));
-#if 0
-  {
-    ArgStringList cpArgs;
-    cpArgs.push_back(OutputFileName);
-    cpArgs.push_back("/tmp/llc_input.bc");
-    C.addCommand(llvm::make_unique<Command>(
-        JA, *this, Args.MakeArgString("/bin/cp"), cpArgs, Inputs));
-  }
-#endif
-
+  C.addCommand(std::make_unique<Command>(JA, *this, OptExec, OptArgs, Inputs));
   return OutputFileName;
 }
 
@@ -257,18 +245,8 @@ const char *AMDGCN::Linker::constructLlcCommand(
     Compilation &C, const JobAction &JA, const InputInfoList &Inputs,
     const llvm::opt::ArgList &Args, llvm::StringRef SubArchName,
     llvm::StringRef OutputFilePrefix, const char *InputFileName) const {
-
   // Construct llc command.
-  // FIXME: -disable-promote-alloca-to-lds is a workaround for issues in
-  // AMDGPUPromoteAlloca pass which cause invalid memory access in PyTorch.
-  // Remove this once the issue is fixed.
   ArgStringList LlcArgs{InputFileName, "-mtriple=amdgcn-amd-amdhsa",
-/* TODO schi merge HCC2 <<<<<<< HEAD
-                        "-filetype=obj", "-mattr=-code-object-v3",
-                        "-disable-promote-alloca-to-lds",
-                        Args.MakeArgString("-mcpu=" + SubArchName), "-o"};
-=======
-*/
                         "-filetype=obj",
                         Args.MakeArgString("-mcpu=" + SubArchName)};
 
@@ -293,7 +271,6 @@ const char *AMDGCN::Linker::constructLlcCommand(
 
   // Add output filename
   LlcArgs.push_back("-o");
-// >>>>>>> upstream/master
   std::string LlcOutputFileName =
       C.getDriver().GetTemporaryPath(OutputFilePrefix, "o");
   const char *LlcOutputFile =
@@ -302,7 +279,7 @@ const char *AMDGCN::Linker::constructLlcCommand(
   SmallString<128> LlcPath(C.getDriver().Dir);
   llvm::sys::path::append(LlcPath, "llc");
   const char *Llc = Args.MakeArgString(LlcPath);
-  C.addCommand(llvm::make_unique<Command>(JA, *this, Llc, LlcArgs, Inputs));
+  C.addCommand(std::make_unique<Command>(JA, *this, Llc, LlcArgs, Inputs));
   return LlcOutputFile;
 }
 
@@ -318,7 +295,7 @@ void AMDGCN::Linker::constructLldCommand(Compilation &C, const JobAction &JA,
   SmallString<128> LldPath(C.getDriver().Dir);
   llvm::sys::path::append(LldPath, "lld");
   const char *Lld = Args.MakeArgString(LldPath);
-  C.addCommand(llvm::make_unique<Command>(JA, *this, Lld, LldArgs, Inputs));
+  C.addCommand(std::make_unique<Command>(JA, *this, Lld, LldArgs, Inputs));
 }
 
 // Construct a clang-offload-bundler command to bundle code objects for
@@ -352,7 +329,7 @@ void AMDGCN::constructHIPFatbinCommand(Compilation &C, const JobAction &JA,
   SmallString<128> BundlerPath(C.getDriver().Dir);
   llvm::sys::path::append(BundlerPath, "clang-offload-bundler");
   const char *Bundler = Args.MakeArgString(BundlerPath);
-  C.addCommand(llvm::make_unique<Command>(JA, T, Bundler, BundlerArgs, Inputs));
+  C.addCommand(std::make_unique<Command>(JA, T, Bundler, BundlerArgs, Inputs));
 }
 
 // For amdgcn the inputs of the linker job are device bitcode and output is
@@ -373,12 +350,8 @@ void AMDGCN::Linker::ConstructJob(Compilation &C, const JobAction &JA,
   assert(StringRef(SubArchName).startswith("gfx") && "Unsupported sub arch");
 
   // Prefix for temporary file name.
-  std::string Prefix;
-  for (const auto &II : Inputs)
-    if (II.isFilename())
-      Prefix =
-          llvm::sys::path::stem(II.getFilename()).str() + "-" + SubArchName;
-  assert(Prefix.length() && "no linker inputs are files ");
+  std::string Prefix =
+      llvm::sys::path::stem(Inputs[0].getFilename()).str() + "-" + SubArchName;
 
   // Each command outputs different files.
   bool DoOverride = true; // Always use custom linker
@@ -389,8 +362,8 @@ void AMDGCN::Linker::ConstructJob(Compilation &C, const JobAction &JA,
     DoOverride
           ? constructOmpExtraCmds(C, JA, Inputs, Args, SubArchName, Prefix)
           : "";
-  const char *LLVMLinkCommand = constructLLVMLinkCommand(
-      C, JA, Inputs, Args, SubArchName, Prefix, overrideInputs);
+  const char *LLVMLinkCommand =
+      constructLLVMLinkCommand(C, JA, Inputs, Args, SubArchName, Prefix, overrideInputs);
   const char *OptCommand = constructOptCommand(C, JA, Inputs, Args, SubArchName,
                                                Prefix, LLVMLinkCommand);
   const char *LlcCommand =
@@ -414,7 +387,6 @@ void HIPToolChain::addClangTargetOptions(
     const llvm::opt::ArgList &DriverArgs,
     llvm::opt::ArgStringList &CC1Args,
     Action::OffloadKind DeviceOffloadingKind) const {
-
   HostTC.addClangTargetOptions(DriverArgs, CC1Args, DeviceOffloadingKind);
 
   StringRef GpuArch = DriverArgs.getLastArgValue(options::OPT_march_EQ);
@@ -445,12 +417,6 @@ void HIPToolChain::addClangTargetOptions(
   if (!DriverArgs.hasArg(options::OPT_fvisibility_EQ,
                          options::OPT_fvisibility_ms_compat)) {
     CC1Args.append({"-fvisibility", "hidden"});
-// TODO schi merge HCC2 <<<<<<< HEAD
-
-  /*  if (DeviceOffloadingKind == Action::OFK_OpenMP)
-      AddOpenMPDBCLs(DriverArgs, CC1Args, GpuArch, getDriver(), true);
-      */
-// =======
     CC1Args.push_back("-fapply-global-visibility-to-externs");
   }
   ArgStringList LibraryPaths;
@@ -497,9 +463,7 @@ void HIPToolChain::addClangTargetOptions(
   }
   for (auto Lib : BCLibs)
     addBCLib(getDriver(), DriverArgs, CC1Args, LibraryPaths, Lib);
-// >>>>>>> upstream/master
 }
-
 
 llvm::opt::DerivedArgList *
 HIPToolChain::TranslateArgs(const llvm::opt::DerivedArgList &Args,
